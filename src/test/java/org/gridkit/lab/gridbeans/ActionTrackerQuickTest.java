@@ -3,12 +3,10 @@ package org.gridkit.lab.gridbeans;
 import java.lang.reflect.Method;
 import java.util.Set;
 
-import junit.framework.Assert;
-
 import org.gridkit.lab.gridbeans.ActionGraph.Action;
 import org.gridkit.lab.gridbeans.ActionGraph.ActionSite;
+import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class ActionTrackerQuickTest {
