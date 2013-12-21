@@ -1,16 +1,40 @@
 package org.gridkit.lab.gridbeans;
 
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ParallelBeanTest {
 
+	public Executor exec = Executors.newCachedThreadPool();
+	
+	@After
+	public void destroyExecutor() {
+		((ExecutorService)exec).shutdown();
+	}
+	
 	@Test
 	public void test_simple_bean() {
 		SimpleTestDriver a = new SimpleTestDriver("");
 		SimpleTestDriver b = new SimpleTestDriver("");
 		
 		TestDriver td = ParallelBeanProxy.directProxy(TestDriver.class, a, b);
+		
+		td.print("Hallo world!");
+		Assert.assertEquals("123", td.echo("123"));
+		Assert.assertEquals("ABC-123", td.withPrefix("ABC-").echo("123"));
+	}	
+
+	@Test
+	public void test_parallel_bean() {
+		SimpleTestDriver a = new SimpleTestDriver("");
+		SimpleTestDriver b = new SimpleTestDriver("");
+		
+		TestDriver td = ParallelBeanProxy.parallelProxy(TestDriver.class, exec, a, b);
 		
 		td.print("Hallo world!");
 		Assert.assertEquals("123", td.echo("123"));

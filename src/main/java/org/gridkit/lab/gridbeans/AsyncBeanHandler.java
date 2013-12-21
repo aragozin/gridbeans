@@ -3,6 +3,7 @@ package org.gridkit.lab.gridbeans;
 import java.io.Serializable;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
 import org.gridkit.util.concurrent.FutureBox;
@@ -54,26 +55,24 @@ public interface AsyncBeanHandler {
 		}
 	}
 	
-	public static class ExecutorBeanHandler implements AsyncBeanHandler, Serializable {
-		
-		private static final long serialVersionUID = 20131208L;
-		
-		private Object target;
+	public static class OffThreadAdapter implements AsyncBeanHandler {
+
+		private AsyncBeanHandler target;
 		private Executor executor;
 
-		public ExecutorBeanHandler(Object target, Executor exec) {
+		public OffThreadAdapter(AsyncBeanHandler target, Executor exec) {
 			this.target = target;
 			this.executor = exec;
 		}
 
 		@Override
 		public Class<?> getType() {
-			return target.getClass();
+			return target.getType();
 		}
 
 		@Override
 		public Object resolve() {
-			return target;
+			return target.resolve();
 		}
 
 		@Override
@@ -85,16 +84,16 @@ public interface AsyncBeanHandler {
 				public void run() {
 					String tn = Thread.currentThread().getName();
 					Thread.currentThread().setName(tn + "CALLING: " + m.getDeclaringClass().getSimpleName() + "#" + m.getName());
+					FutureEx<AsyncBeanHandler> future = target.fire(m, args);
 					try {
-						box.setData(new ExecutorBeanHandler(m.invoke(target, args), executor));
+						
+						box.setData(new OffThreadAdapter(future.get(), executor));
 					}
-					catch(InvocationTargetException e) {
+					catch(ExecutionException e) {
 						box.setError(e.getCause());
-					} catch (IllegalArgumentException e) {
-						throw new RuntimeException(e);
-					} catch (IllegalAccessException e) {
-						throw new RuntimeException(e);
-					}
+					} catch (InterruptedException e) {
+						box.setError(e);
+					}					
 					finally {
 						Thread.currentThread().setName(tn);
 					}
