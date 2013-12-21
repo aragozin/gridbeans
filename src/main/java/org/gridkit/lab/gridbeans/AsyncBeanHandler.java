@@ -8,21 +8,21 @@ import java.util.concurrent.Executor;
 import org.gridkit.util.concurrent.FutureBox;
 import org.gridkit.util.concurrent.FutureEx;
 
-public interface AsyncObjectHandle {
+public interface AsyncBeanHandler {
 
 	public Class<?> getType();
 	
 	public Object resolve();
 
-	public FutureEx<AsyncObjectHandle> fire(Method m, Object[] args);
+	public FutureEx<AsyncBeanHandler> fire(Method m, Object[] args);
 
-	public static class DirectHandle implements AsyncObjectHandle, Serializable {
+	public static class DirectHandler implements AsyncBeanHandler, Serializable {
 		
 		private static final long serialVersionUID = 20131208L;
 		
 		private Object target;
 
-		public DirectHandle(Object target) {
+		public DirectHandler(Object target) {
 			this.target = target;
 		}
 
@@ -37,11 +37,11 @@ public interface AsyncObjectHandle {
 		}
 
 		@Override
-		public FutureEx<AsyncObjectHandle> fire(Method m, Object[] args) {
+		public FutureEx<AsyncBeanHandler> fire(Method m, Object[] args) {
 			// TODO lookup matching method in target class
-			FutureBox<AsyncObjectHandle> box = new FutureBox<AsyncObjectHandle>();
+			FutureBox<AsyncBeanHandler> box = new FutureBox<AsyncBeanHandler>();
 			try {
-				box.setData(new DirectHandle(m.invoke(target, args)));
+				box.setData(new DirectHandler(m.invoke(target, args)));
 			}
 			catch(InvocationTargetException e) {
 				box.setError(e.getCause());
@@ -54,14 +54,14 @@ public interface AsyncObjectHandle {
 		}
 	}
 	
-	public static class ExecutorHandle implements AsyncObjectHandle, Serializable {
+	public static class ExecutorBeanHandler implements AsyncBeanHandler, Serializable {
 		
 		private static final long serialVersionUID = 20131208L;
 		
 		private Object target;
 		private Executor executor;
 
-		public ExecutorHandle(Object target, Executor exec) {
+		public ExecutorBeanHandler(Object target, Executor exec) {
 			this.target = target;
 			this.executor = exec;
 		}
@@ -77,14 +77,16 @@ public interface AsyncObjectHandle {
 		}
 
 		@Override
-		public FutureEx<AsyncObjectHandle> fire(final Method m, final Object[] args) {
+		public FutureEx<AsyncBeanHandler> fire(final Method m, final Object[] args) {
 			// TODO lookup
-			final FutureBox<AsyncObjectHandle> box = new FutureBox<AsyncObjectHandle>();
+			final FutureBox<AsyncBeanHandler> box = new FutureBox<AsyncBeanHandler>();
 			executor.execute(new Runnable() {
 				@Override
 				public void run() {
+					String tn = Thread.currentThread().getName();
+					Thread.currentThread().setName(tn + "CALLING: " + m.getDeclaringClass().getSimpleName() + "#" + m.getName());
 					try {
-						box.setData(new ExecutorHandle(m.invoke(target, args), executor));
+						box.setData(new ExecutorBeanHandler(m.invoke(target, args), executor));
 					}
 					catch(InvocationTargetException e) {
 						box.setError(e.getCause());
@@ -92,6 +94,9 @@ public interface AsyncObjectHandle {
 						throw new RuntimeException(e);
 					} catch (IllegalAccessException e) {
 						throw new RuntimeException(e);
+					}
+					finally {
+						Thread.currentThread().setName(tn);
 					}
 				}
 			});

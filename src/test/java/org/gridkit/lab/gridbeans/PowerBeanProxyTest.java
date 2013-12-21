@@ -1,5 +1,7 @@
 package org.gridkit.lab.gridbeans;
 
+import java.util.Arrays;
+
 import org.gridkit.lab.gridbeans.PowerBeanProxy.Invocation;
 import org.gridkit.lab.gridbeans.PowerBeanProxy.InvocationProcessor;
 import org.junit.Assert;
@@ -26,6 +28,10 @@ public class PowerBeanProxyTest {
 		Assert.assertSame(handler, PowerBeanProxy.getHandler(h1));
 		Assert.assertSame(handler, PowerBeanProxy.getHandler(h2));
 		Assert.assertSame(handler, PowerBeanProxy.getHandler(h3));
+
+		Assert.assertArrayEquals(new Object[]{Holder.class}, PowerBeanProxy.getFacade(h1).toArray());
+		Assert.assertArrayEquals(new Object[]{Holder.class}, PowerBeanProxy.getFacade(h2).toArray());
+		Assert.assertArrayEquals(new Object[]{Holder.class}, PowerBeanProxy.getFacade(h3).toArray());
 		
 	}
 	

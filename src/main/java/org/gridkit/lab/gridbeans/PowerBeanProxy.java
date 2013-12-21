@@ -6,6 +6,7 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -33,6 +34,15 @@ public class PowerBeanProxy implements InvocationHandler {
 	public static InvocationProcessor getHandler(Object proxy) {
 		if (proxy instanceof ProxyBean) {
 			return ((ProxyBean)proxy).getHandler(null);
+		}
+		else {
+			return null;
+		}
+	}
+
+	public static Collection<Class<?>> getFacade(Object proxy) {
+		if (proxy instanceof ProxyBean) {
+			return ((ProxyBean)proxy).getFacade(null);
 		}
 		else {
 			return null;
@@ -76,6 +86,9 @@ public class PowerBeanProxy implements InvocationHandler {
 		if (method.getDeclaringClass() == ProxyBean.class) {
 			if ("clone".equals(method.getName())) {
 				return new PowerBeanProxy((InvocationProcessor)args[1], dynType);
+			}
+			else if ("getFacade".equals(method.getName())) {
+				return Collections.unmodifiableCollection(facade);
 			}
 			else {
 				// TODO only one method in ProxyBean is assumed
@@ -270,7 +283,8 @@ public class PowerBeanProxy implements InvocationHandler {
 		public PowerBeanProxy clone(ProxyBean signatureSafeGuard, InvocationProcessor handler);
 
 		public InvocationProcessor getHandler(ProxyBean signatureSafeGuard);
-		
+
+		public Collection<Class<?>> getFacade(ProxyBean signatureSafeGuard);		
 	}
 	
 	static List<Class<?>> collectInterfaces(Class<?> type) {		

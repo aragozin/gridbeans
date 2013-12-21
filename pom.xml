@@ -35,7 +35,7 @@
     <dependencies>
         <dependency>
             <groupId>org.gridkit.lab</groupId>
-            <artifactId>viconcurrent</artifactId>
+            <artifactId>nanocloud</artifactId>
             <version>0.8.2-SNAPSHOT</version>
         </dependency>
         <dependency>
