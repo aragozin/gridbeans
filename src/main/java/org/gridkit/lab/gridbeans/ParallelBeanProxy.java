@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 
 import org.gridkit.lab.gridbeans.PowerBeanProxy.Invocation;
 import org.gridkit.lab.gridbeans.PowerBeanProxy.InvocationProcessor;
@@ -41,6 +42,14 @@ public class ParallelBeanProxy {
 	
 	public static <T> T directProxy(Class<T> type, T... beans) {
 		return directProxy(type, Arrays.asList(beans));
+	}
+
+	public static <T> T parallelProxy(Class<T> type, Executor exec, T... beans) {
+		List<AsyncBeanHandler> handles = new ArrayList<AsyncBeanHandler>(beans.length);
+		for(T b : beans) {
+			handles.add(new AsyncBeanHandler.OffThreadAdapter(new AsyncBeanHandler.DirectHandler(b), exec));
+		}
+		return proxy(type, handles);
 	}
 
 	public static <T> T directProxy(Class<T> type, Collection<T> beans) {

@@ -1,11 +1,9 @@
 package org.gridkit.lab.gridbeans;
 
 import java.io.Serializable;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.rmi.Remote;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.ExecutionException;
 
 import org.gridkit.util.concurrent.FutureBox;
 import org.gridkit.util.concurrent.FutureEx;
@@ -14,20 +12,27 @@ public class RemoteBeanHandler implements AsyncBeanHandler, Serializable {
 
 	private static final long serialVersionUID = 20131221L;
 	
-	private Object target;
+	private RemoteHandler handler;
+	
+	private transient Class<?> remoteType;
+	private transient Object remoteResolved;
 
-	public RemoteBeanHandler(Object target) {
-		this.target = target;
+	public RemoteBeanHandler(AsyncBeanHandler target) {
+		this.handler = new RemotePart(target);
+	}
+
+	protected RemoteBeanHandler(RemoteHandler handler) {
+		this.handler = handler;
 	}
 
 	@Override
 	public Class<?> getType() {
-		return target.getClass();
+		return handler.getType();
 	}
 
 	@Override
 	public Object resolve() {
-		return target;
+		return handler.resolve();
 	}
 
 	@Override
@@ -35,52 +40,53 @@ public class RemoteBeanHandler implements AsyncBeanHandler, Serializable {
 		// TODO lookup matching method in target class
 		FutureBox<AsyncBeanHandler> box = new FutureBox<AsyncBeanHandler>();
 		try {
-			box.setData(new DirectHandler(m.invoke(target, args)));
-		}
-		catch(InvocationTargetException e) {
-			box.setError(e.getCause());
-		} catch (IllegalArgumentException e) {
-			throw new RuntimeException(e);
-		} catch (IllegalAccessException e) {
-			throw new RuntimeException(e);
+			box.setData(new RemoteBeanHandler(handler.fire(m, args)));
+		} catch (ThreadDeath e) {
+			throw e;
+		} catch (Throwable e) {
+			box.setError(e);
 		}
 		return box;
 	}
 	
 	private interface RemoteHandler extends Remote {
 		
-		public Class<?> getType(int id);
+		public Class<?> getType();
 
-		public Object resolve(int id);
 
-		public int fire(int id, Method m, Object[] args);
+		public Object resolve();
+
+		public RemoteHandler fire(Method m, Object[] args) throws Throwable;
 	}
 	
 	private class RemotePart implements RemoteHandler {
 
-		public List<Object> targets = new ArrayList<Object>();
+		private AsyncBeanHandler target;
 		
-		
+		public RemotePart(AsyncBeanHandler target) {
+			this.target = target;
+		}
 		
 		@Override
-		public Class<?> getType(int id) {
-			// TODO Auto-generated method stub
-			return null;
+		public Class<?> getType() {
+			return target.getType();
 		}
 
 		@Override
-		public Object resolve(int id) {
-			// TODO Auto-generated method stub
-			return null;
+		public Object resolve() {
+			return target.resolve();
 		}
 
 		@Override
-		public int fire(int id, Method m, Object[] args) {
-			// TODO Auto-generated method stub
-			return 0;
+		public RemoteHandler fire(Method m, Object[] args) throws Throwable {
+			FutureEx<AsyncBeanHandler> f = target.fire(m, args);
+			try {
+				return new RemotePart(f.get());
+			}
+			catch(ExecutionException e) {
+				throw e.getCause();
+			}			
 		}
-
-		
 	}
 	
 }
