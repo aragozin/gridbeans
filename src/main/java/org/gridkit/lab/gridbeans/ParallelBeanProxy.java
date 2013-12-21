@@ -18,7 +18,7 @@ public class ParallelBeanProxy {
 
 	public static <T> T lump(Collection<T> proxies) {
 		T head = proxies.iterator().next();
-		List<AsyncObjectHandle> beans = new ArrayList<AsyncObjectHandle>();
+		List<AsyncBeanHandler> beans = new ArrayList<AsyncBeanHandler>();
 		for(T p: proxies) {
 			InvocationProcessor ip = PowerBeanProxy.getHandler(p);
 			if (ip == null || !(ip instanceof CallProcessor)) {
@@ -29,13 +29,13 @@ public class ParallelBeanProxy {
 		return PowerBeanProxy.cloneProxy(head, new CallProcessor(beans));
 	}
 	
-	public static <T> T proxy(Class<T> type, AsyncObjectHandle... beans) {
+	public static <T> T proxy(Class<T> type, AsyncBeanHandler... beans) {
 		CallProcessor cp = new CallProcessor(Arrays.asList(beans));
 		return PowerBeanProxy.powerProxy(cp, type);
 	}
 
-	public static <T> T proxy(Class<T> type, Collection<AsyncObjectHandle> beans) {
-		CallProcessor cp = new CallProcessor(new ArrayList<AsyncObjectHandle>(beans));
+	public static <T> T proxy(Class<T> type, Collection<AsyncBeanHandler> beans) {
+		CallProcessor cp = new CallProcessor(new ArrayList<AsyncBeanHandler>(beans));
 		return PowerBeanProxy.powerProxy(cp, type);		
 	}
 	
@@ -44,30 +44,30 @@ public class ParallelBeanProxy {
 	}
 
 	public static <T> T directProxy(Class<T> type, Collection<T> beans) {
-		List<AsyncObjectHandle> handles = new ArrayList<AsyncObjectHandle>(beans.size());
+		List<AsyncBeanHandler> handles = new ArrayList<AsyncBeanHandler>(beans.size());
 		for(T b : beans) {
-			handles.add(new AsyncObjectHandle.DirectHandle(b));
+			handles.add(new AsyncBeanHandler.DirectHandler(b));
 		}
 		return proxy(type, handles);
 	}
 	
 	private static class CallProcessor implements InvocationProcessor {
 
-		private List<AsyncObjectHandle> handles = new ArrayList<AsyncObjectHandle>();
+		private List<AsyncBeanHandler> handles = new ArrayList<AsyncBeanHandler>();
 
-		public CallProcessor(List<AsyncObjectHandle> handles) {
+		public CallProcessor(List<AsyncBeanHandler> handles) {
 			this.handles = handles;
 		}
 
 		@Override
 		public void process(Invocation invocation) {
-			List<FutureEx<AsyncObjectHandle>> futures = new ArrayList<FutureEx<AsyncObjectHandle>>(handles.size());
-			for(AsyncObjectHandle h: handles) {
+			List<FutureEx<AsyncBeanHandler>> futures = new ArrayList<FutureEx<AsyncBeanHandler>>(handles.size());
+			for(AsyncBeanHandler h: handles) {
 				futures.add(h.fire(invocation.getMethod(), invocation.getArguments()));
 			}
-			List<AsyncObjectHandle> beans = new ArrayList<AsyncObjectHandle>(handles.size());
+			List<AsyncBeanHandler> beans = new ArrayList<AsyncBeanHandler>(handles.size());
 			try {
-				for(FutureEx<AsyncObjectHandle> f: futures) {
+				for(FutureEx<AsyncBeanHandler> f: futures) {
 					beans.add(f.get());
 				}
 			} catch (InterruptedException e) {
@@ -96,7 +96,7 @@ public class ParallelBeanProxy {
 			}
 		}
 
-		private Object reduce(List<AsyncObjectHandle> beans) {
+		private Object reduce(List<AsyncBeanHandler> beans) {
 			if (beans.size() == 1) {
 				return beans.get(0).resolve();
 			}
