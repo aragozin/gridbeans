@@ -106,7 +106,10 @@ public class ParallelBeanProxy {
 		}
 
 		private Object reduce(List<AsyncBeanHandler> beans) {
-			if (beans.size() == 1) {
+			if (beans.isEmpty()) {
+				throw new IllegalArgumentException("Bean list is empty");
+			}
+			else if (beans.size() == 1) {
 				return beans.get(0).resolve();
 			}
 			else {

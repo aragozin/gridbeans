@@ -1,7 +1,5 @@
 package org.gridkit.lab.gridbeans;
 
-import java.util.Arrays;
-
 import org.gridkit.lab.gridbeans.PowerBeanProxy.Invocation;
 import org.gridkit.lab.gridbeans.PowerBeanProxy.InvocationProcessor;
 import org.junit.Assert;
