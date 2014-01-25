@@ -15,6 +15,7 @@ public class RemoteBeanHandler implements AsyncBeanHandler, Serializable {
 	private RemoteHandler handler;
 	
 	private transient Class<?> remoteType;
+	private transient boolean isResolved = false;
 	private transient Object remoteResolved;
 
 	public RemoteBeanHandler(AsyncBeanHandler target) {
@@ -26,21 +27,27 @@ public class RemoteBeanHandler implements AsyncBeanHandler, Serializable {
 	}
 
 	@Override
-	public Class<?> getType() {
-		return handler.getType();
+	public synchronized Class<?> getType() {
+		if (remoteType == null) {
+			remoteType = handler.getType(); 
+		}
+		return remoteType;
 	}
 
 	@Override
 	public Object resolve() {
-		return handler.resolve();
+		if (!isResolved) {
+			remoteResolved = handler.resolve();
+			isResolved = true;			 
+		}
+		return remoteResolved;
 	}
 
 	@Override
 	public FutureEx<AsyncBeanHandler> fire(Method m, Object[] args) {
-		// TODO lookup matching method in target class
 		FutureBox<AsyncBeanHandler> box = new FutureBox<AsyncBeanHandler>();
 		try {
-			box.setData(new RemoteBeanHandler(handler.fire(m, args)));
+			box.setData(new RemoteBeanHandler(handler.fire(new MethodRef(m), args)));
 		} catch (ThreadDeath e) {
 			throw e;
 		} catch (Throwable e) {
@@ -56,7 +63,7 @@ public class RemoteBeanHandler implements AsyncBeanHandler, Serializable {
 
 		public Object resolve();
 
-		public RemoteHandler fire(Method m, Object[] args) throws Throwable;
+		public RemoteHandler fire(MethodRef m, Object[] args) throws Throwable;
 	}
 	
 	private class RemotePart implements RemoteHandler {
@@ -78,8 +85,8 @@ public class RemoteBeanHandler implements AsyncBeanHandler, Serializable {
 		}
 
 		@Override
-		public RemoteHandler fire(Method m, Object[] args) throws Throwable {
-			FutureEx<AsyncBeanHandler> f = target.fire(m, args);
+		public RemoteHandler fire(MethodRef m, Object[] args) throws Throwable {
+			FutureEx<AsyncBeanHandler> f = target.fire(m.newMethod(), args);
 			try {
 				return new RemotePart(f.get());
 			}
@@ -89,4 +96,26 @@ public class RemoteBeanHandler implements AsyncBeanHandler, Serializable {
 		}
 	}
 	
+	static class MethodRef implements Serializable {
+	    
+		private static final long serialVersionUID = 20140201L;
+	    
+	    private final Class<?> clazz;
+	    private final String name;
+	    private final Class<?>[] parameterTypes;
+	    
+	    public MethodRef(Method method) {
+	        clazz = method.getDeclaringClass();
+	        name = method.getName();
+	        parameterTypes = method.getParameterTypes();
+	    }
+	    
+	    public Method newMethod() throws Exception {
+	        return clazz.getDeclaredMethod(name, parameterTypes);
+	    }
+	    
+	    public Object invoke(Object obj, Object... args) throws Exception {
+	        return newMethod().invoke(obj, args);
+	    }
+	}	
 }
