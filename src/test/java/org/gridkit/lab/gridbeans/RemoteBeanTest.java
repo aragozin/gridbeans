@@ -1,7 +1,8 @@
 package org.gridkit.lab.gridbeans;
 
-import static org.gridkit.nanocloud.VX.TYPE;
+import static org.gridkit.nanocloud.VX.ISOLATE;
 
+import java.util.Arrays;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -16,69 +17,47 @@ import org.junit.Test;
 
 public class RemoteBeanTest {
 
-	public Executor exec = Executors.newCachedThreadPool();
 	public Cloud cloud = CloudFactory.createCloud();
 	
-	@Before
-	public void before() {
-		cloud.node("**").x(TYPE).setIsolate();
-	}
+	public Executor exec = Executors.newCachedThreadPool();
 	
 	@After
 	public void destroyExecutor() {
 		((ExecutorService)exec).shutdown();
+	}	
+	
+	@Before
+	public void initCloud() {
+		cloud.node("**").x(ISOLATE).setIsolateNodeType();
 	}
-
-	@After
-	public void destroyCloud() {
-		cloud.shutdown();
+	
+	public AsyncBeanHandler exportRemote(String node, final String prefix) {
+		return cloud.node(node).exec(new Callable<AsyncBeanHandler>() {
+			@Override
+			public AsyncBeanHandler call() throws Exception {				
+				return new RemoteBeanHandler(new AsyncBeanHandler.DirectHandler(new SimpleTestDriver(prefix)));
+			}
+		});
 	}
 	
 	@Test
-	public void test_simple_bean() {
-		cloud.nodes("a", "b");
+	public void test_parallel_remote() {
+	
+		AsyncBeanHandler b1 = exportRemote("A", "");
+		AsyncBeanHandler b2 = exportRemote("B", "");
 		
-		TestDriver td = BeanHelper.remoteProxy(TestDriver.class, cloud.node("**"), new Callable<TestDriver>() {
+		TestDriver td = ParallelBeanProxy.parallelProxy(TestDriver.class, exec, Arrays.asList(b1, b2));
 
-			@Override
-			public TestDriver call() throws Exception {
-				return new SimpleTestDriver("");
-			}
-			
-		});
-		
 		td.print("Hallo world!");
 		Assert.assertEquals("123", td.echo("123"));
-		Assert.assertEquals("ABC-123", td.withPrefix("ABC-").echo("123"));
-		Assert.assertEquals("123", td.doubleEcho("123"));
-	}	
-
-	@Test
-	public void test_parallel_bean() {
-		cloud.nodes("a", "b");
-		
-		TestDriver td = BeanHelper.remoteParallelProxy(TestDriver.class, exec, cloud.node("**"), new Callable<TestDriver>() {
-			
-			@Override
-			public TestDriver call() throws Exception {
-				return new SimpleTestDriver("");
-			}
-			
-		});
-		
-		td.print("Hallo world!");
-		Assert.assertEquals("123", td.echo("123"));
-		Assert.assertEquals("ABC-123", td.withPrefix("ABC-").echo("123"));
-		Assert.assertEquals("123", td.doubleEcho("123"));
-	}	
+		Assert.assertEquals("ABC-123", td.withPrefix("ABC-").echo("123"));		
+	}
 
 	public static interface TestDriver {
 		
 		public void print(String text);
 		
 		public String echo(String text);
-
-		public String doubleEcho(String text);
 		
 		public TestDriver withPrefix(String prefix);
 		
@@ -94,24 +73,17 @@ public class RemoteBeanTest {
 
 		@Override
 		public void print(String text) {
-			System.out.println("[PRINT] " + prefix + text);			
+			System.out.println("[PRINT] " + prefix + text);
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e) {
+			}
+			System.out.println("Waked");
 		}
 
 		@Override
 		public String echo(String text) {
 			System.out.println("[ECHO] " + prefix + text);			
-			return prefix + text;
-		}
-
-		@Override
-		public String doubleEcho(String text) {
-			System.out.println("[ECHO-1] " + prefix + text);
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e) {
-				// ignore
-			}
-			System.out.println("[ECHO-2] " + prefix + text);
 			return prefix + text;
 		}
 
