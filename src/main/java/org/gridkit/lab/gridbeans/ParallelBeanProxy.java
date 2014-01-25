@@ -52,6 +52,14 @@ public class ParallelBeanProxy {
 		return proxy(type, handles);
 	}
 
+	public static <T> T parallelProxy(Class<T> type, Executor exec, Collection<AsyncBeanHandler> beans) {
+		List<AsyncBeanHandler> handles = new ArrayList<AsyncBeanHandler>(beans.size());
+		for(AsyncBeanHandler b : beans) {
+			handles.add(new AsyncBeanHandler.OffThreadAdapter(b, exec));
+		}
+		return proxy(type, handles);
+	}
+
 	public static <T> T directProxy(Class<T> type, Collection<T> beans) {
 		List<AsyncBeanHandler> handles = new ArrayList<AsyncBeanHandler>(beans.size());
 		for(T b : beans) {
@@ -81,8 +89,10 @@ public class ParallelBeanProxy {
 				}
 			} catch (InterruptedException e) {
 				invocation.doThrow(new RuntimeException(e));
+				return;
 			} catch (ExecutionException e) {
 				invocation.doThrow(e.getCause());
+				return;
 			}
 			if (invocation.getReturnType() == void.class) {
 				invocation.doReturnObject(null);

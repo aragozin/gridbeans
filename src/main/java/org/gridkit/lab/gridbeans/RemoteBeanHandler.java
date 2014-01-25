@@ -29,7 +29,7 @@ public class RemoteBeanHandler implements AsyncBeanHandler, Serializable {
 	@Override
 	public synchronized Class<?> getType() {
 		if (remoteType == null) {
-			remoteType = handler.getType(); 
+			remoteType = handler.getType();
 		}
 		return remoteType;
 	}
