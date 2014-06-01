@@ -13,6 +13,9 @@ import java.util.List;
 import java.util.Set;
 
 /**
+ * {@link PowerBeanProxy} is an advanced dynamic proxy execution handler
+ * capable of tracking erased generic types at runtime.
+ * 
  * @author Alexey Ragozin (alexey.ragozin@gmail.com)
  */
 public class PowerBeanProxy implements InvocationHandler {

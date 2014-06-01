@@ -3,7 +3,7 @@ package org.gridkit.lab.gridbeans;
 import org.gridkit.lab.gridbeans.ActionGraph.Action;
 import org.gridkit.lab.gridbeans.ActionGraph.ActionSite;
 
-public class GraphUtils {
+class GraphUtils {
 
 	public static String dump(ActionGraph graph) {
 		

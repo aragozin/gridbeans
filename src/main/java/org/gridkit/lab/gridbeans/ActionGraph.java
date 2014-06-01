@@ -3,6 +3,17 @@ package org.gridkit.lab.gridbeans;
 import java.lang.reflect.Method;
 import java.util.Set;
 
+/**
+ * Action graph is a graph capturing execution and data dependencies
+ * of certain script.
+ * <br/>
+ * Expected way of retrieving {@link ActionGraph} is via capturing execution
+ * via (see {@link ActionTracker}) which is using dynamic proxies to mock
+ * action sequence. For that reason graph is very reflection centric.
+ * 
+ * 
+ * @author Alexey Ragozin <alexey.ragozin@gmail.com>
+ */
 public interface ActionGraph {
 
 	public Set<Action> allActions();
