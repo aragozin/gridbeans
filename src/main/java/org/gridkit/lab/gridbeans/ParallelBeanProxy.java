@@ -11,6 +11,11 @@ import org.gridkit.lab.gridbeans.PowerBeanProxy.Invocation;
 import org.gridkit.lab.gridbeans.PowerBeanProxy.InvocationProcessor;
 import org.gridkit.util.concurrent.FutureEx;
 
+/**
+ * A number of helper methods for shaping out various bean execution constructs.
+ * 
+ * @author Alexey Ragozin <alexey.ragozin@gmail.com>
+ */
 public class ParallelBeanProxy {
 
 	public static <T> T lump(T... proxies) {

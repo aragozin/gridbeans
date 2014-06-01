@@ -1,6 +1,6 @@
 package org.gridkit.lab.gridbeans;
 
-public interface ProtoProxy {
+interface ProtoProxy {
 
 	/**
 	 * Lumps several beans proxies with same types from same graph.

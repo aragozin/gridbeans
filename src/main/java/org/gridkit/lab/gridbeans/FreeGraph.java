@@ -10,6 +10,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * An editable implementation of {@link ActionGraph}
+ * 
+ * @author Alexey Ragozin <alexey.ragozin@gmail.com>
+ */
 public class FreeGraph implements ActionGraph {
 	
 	private List<MappedBean> beans = new ArrayList<MappedBean>();
