@@ -36,7 +36,7 @@
         <dependency>
             <groupId>org.gridkit.lab</groupId>
             <artifactId>nanocloud</artifactId>
-            <version>0.8.3-SNAPSHOT</version>
+            <version>0.8.4</version>
         </dependency>
         <dependency>
             <groupId>junit</groupId>
