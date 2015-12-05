@@ -2,19 +2,19 @@ package org.gridkit.lab.gridbeans.monadic;
 
 public class Period {
 
-    private final Label begin;
-    private final Label end;
+    private final Checkpoint begin;
+    private final Checkpoint end;
 
-    public Period(Label begin, Label end) {
+    public Period(Checkpoint begin, Checkpoint end) {
         this.begin = begin;
         this.end = end;
     }
     
-    public Label begin() {
+    public Checkpoint begin() {
         return begin;
     }
 
-    public Label end() {
+    public Checkpoint end() {
         return end;
     }
 }

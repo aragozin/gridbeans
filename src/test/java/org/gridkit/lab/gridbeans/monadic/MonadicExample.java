@@ -7,15 +7,15 @@ public class MonadicExample {
     public void test() {
         
         MonadBuilder builder = null;
-        Label lInit = builder.label("init"); 
-        Label lStart = builder.label("start"); 
-        Label lStop = builder.label("stop"); 
-        Label lDone = builder.label("done"); 
+        Checkpoint lInit = builder.label("init"); 
+        Checkpoint lStart = builder.label("start"); 
+        Checkpoint lStop = builder.label("stop"); 
+        Checkpoint lDone = builder.label("done"); 
         
         Cloud cloud = builder.locator(Cloud.class);
         MeteringDriver metering = builder.bean(MeteringDriver.class);
         
-        MyDriver driver = cloud.at("WORKER").deploy(new MyDriverImpl());
+        MyDriver driver = cloud.at("WORKER").deploy(MyDriver.class, new MyDriverImpl());
         ExecutionDriver exec = cloud.at("WORKER").bean(ExecutionDriver.class);
         
         builder.rewind(lInit);
@@ -27,7 +27,7 @@ public class MonadicExample {
                 
         builder.join(lStart);
         
-        builder.bean(Wallclock.class).delay(30, TimeUnit.SECONDS);
+        builder.wallclock().delay(30, TimeUnit.SECONDS);
         
         builder.join(lStop);
         
@@ -37,8 +37,9 @@ public class MonadicExample {
         builder.join(lDone);
     }
  
-    public interface Cloud extends DynamicTarget<String> {
+    public interface Cloud extends Locator {
         
+        public ExecutionTarget at(String filter);
     }
 
     

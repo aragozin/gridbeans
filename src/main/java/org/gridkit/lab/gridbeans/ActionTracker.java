@@ -231,6 +231,8 @@ public class ActionTracker {
 		
 		calls.add(call);
 		
+		
+		
 		return beanDeref.get(call.beanResult);		
 	}
 	
@@ -244,7 +246,7 @@ public class ActionTracker {
 		}
 	}
 
-	protected void afterAction(CallSite site) {
+	protected void afterAction(ActionSite site) {
 		for(TrackingObserver obs: observers) {
 			obs.afterAction(adapter, site);
 		}
@@ -600,8 +602,6 @@ public class ActionTracker {
 	
 	private class EBeanHandle extends BeanHandle implements ExternalBean {
 		
-		private UniqueBean bean;
-
 		public EBeanHandle(UniqueBean bean) {
 			this.bean = bean;
 		}
@@ -618,8 +618,6 @@ public class ActionTracker {
 
 	private class LBeanHandle extends BeanHandle implements LocalBean {
 		
-		private UniqueBean bean;
-
 		public LBeanHandle(UniqueBean bean) {
 			this.bean = bean;
 		}

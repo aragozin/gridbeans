@@ -33,6 +33,45 @@ public class PowerBeanProxyTest {
 		
 	}
 	
+    @Test
+    public void verify_dynamic_factory_type_inference() {
+        
+        ActionTracker tracker = new ActionTracker();
+        
+        HolderDriver d = tracker.inject("driver", HolderDriver.class);
+        
+        Fabricator<Holder> f = d.newDynmaicFactory(Holder.class);
+        Holder h = f.fabricate();
+
+        Assert.assertNotNull(h);
+    }
+
+    @Test
+    public void verify_indirect_dynamic_factory_type_inference() {
+        
+        ActionTracker tracker = new ActionTracker();
+        
+        HolderDriver d = tracker.inject("driver", HolderDriver.class);
+        
+        Fabricator<Holder> f = d.newIndirectDynmaicFactory(HolderMarker.class);
+        Holder h = f.fabricate();
+        
+        Assert.assertNotNull(h);
+    }
+
+    @Test
+    public void verify_dynamic_interface_upcast() {
+        
+        ActionTracker tracker = new ActionTracker();
+        
+        HolderDriver d = tracker.inject("driver", HolderDriver.class);
+        
+        Holder h = d.passthough(new HolderImpl());
+        
+        Assert.assertNotNull(h);
+    }
+
+	
 	public static class AutoHandler implements InvocationProcessor {
 
 		@Override
@@ -55,9 +94,15 @@ public class PowerBeanProxyTest {
 		public Holder newHolder();
 		
 		public T newDynamic();
+
+		public <T> T passthough(T bean);
 		
 		public <X> X newSuperDynamic(Class<X> type);
 		
+        public <X> Fabricator<X> newDynmaicFactory(Class<X> type);
+
+        public <X> Fabricator<X> newIndirectDynmaicFactory(Class<? extends Marker<X>> type);
+        
 	}
 
 	public static interface HolderDriver extends Driver<Holder> {
@@ -65,7 +110,24 @@ public class PowerBeanProxyTest {
 	}
 	
 	public static interface Holder {
-		
+	    
 	}	
 
+	public static class HolderImpl implements Holder {
+	    
+	}
+	
+    public static interface Marker<T> {
+        
+    }
+    
+    public static interface HolderMarker extends Marker<Holder> {
+        
+    }
+    
+    public static interface Fabricator<T> {
+        
+        public T fabricate();
+        
+    }
 }

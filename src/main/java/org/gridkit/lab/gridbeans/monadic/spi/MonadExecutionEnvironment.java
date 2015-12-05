@@ -5,7 +5,7 @@ import java.util.List;
 
 import org.gridkit.util.concurrent.FutureEx;
 
-public interface MonadExecutor {
+public interface MonadExecutionEnvironment {
 
     public ExecutionHost root();
     

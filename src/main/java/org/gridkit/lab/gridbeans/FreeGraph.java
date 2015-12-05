@@ -244,7 +244,7 @@ public class FreeGraph implements ActionGraph {
 		b.dependencies.remove(a);		
 	}
 
-	@Override
+    @Override
 	public Set<Action> getInitialActions() {
 		return searchActions(new Filter<CopyAction>() {
 			@Override

@@ -229,8 +229,7 @@ public class ActionTrackerQuickTest {
 		System.out.println(action1);		
 		System.out.println(action2);		
 	}
-	
-	
+		
 	public static interface Driver<T> {
 		
 		public void run();

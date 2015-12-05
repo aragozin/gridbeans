@@ -123,6 +123,25 @@ class TrackedType {
 		bindVariables((Class)tp.getRawType());
 	}
 
+    private void unifyType(ParameterizedType tp, TrackedType scope) {
+        if (scope.getRawType() == Class.class) {
+            TrackedType rt = scope.getRuntimeTypeReference();
+            
+            TypeVariable<?>[] vars = ((Class)tp.getRawType()).getTypeParameters();
+            Type[] actual = tp.getActualTypeArguments();
+            for(int i = 0; i != vars.length; ++i) {
+                TypeVariable<?> v = vars[i];
+                Type t = actual[i];
+                if (t instanceof WildcardType) {
+                    t = ((WildcardType)t).getUpperBounds()[0];
+                }
+                if (t instanceof TypeVariable) {
+                    variables.put((TypeVariable<?>) t, rt.resolve(v));
+                }
+            }
+        }
+    }
+	
 	private void bindCallParams(ParameterizedType tp, TrackedType scope) {
 		TypeVariable<?>[] vars = ((Class)tp.getRawType()).getTypeParameters();
 		Type[] actual = tp.getActualTypeArguments();
@@ -136,6 +155,15 @@ class TrackedType {
 					variables.put(v, tt);
 				}
 			}
+			else if (t instanceof WildcardType) {
+			    WildcardType w = (WildcardType) t;
+			    if (w.getUpperBounds().length > 0) {
+			        Type bound = w.getUpperBounds()[0];
+			        if (bound instanceof ParameterizedType) {
+			            unifyType((ParameterizedType) bound, scope);
+			        }
+			    }
+			}
 		}
 	}
 
@@ -144,6 +172,19 @@ class TrackedType {
 			init();
 		}
 		return rawType;
+	}
+
+	public TrackedType getRuntimeTypeReference() {
+	    if (delayed) {
+	        init();
+	    }
+	    if (getRawType() == Class.class) {
+	        // T is only variable in Class<T>
+	        return variables.values().iterator().next();
+	    }
+	    else {
+	        throw new IllegalArgumentException("Runtime type could be redived only from Class<T>");
+	    }
 	}
 	
 	public TrackedType resolve(Method m, Object... params) {
