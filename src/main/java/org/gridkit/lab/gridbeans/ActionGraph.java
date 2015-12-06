@@ -30,7 +30,7 @@ public interface ActionGraph {
 
 	public Set<Action> allActions(Bean bean, Method method);
 	
-	public Set<Action> allConsumer(Bean bean);
+	public Set<Action> allConsumers(Bean bean);
 
 	public void addDependency(Action from, Action to);
 
@@ -68,18 +68,26 @@ public interface ActionGraph {
 	 */
 	public void eliminate(Action action);
 	
-	public static interface Bean {
+	public static interface GraphElement {
+	    
+	    public ActionGraph getGraph();
+	    
+	}
+	
+	public static interface Bean extends GraphElement {
 
-		Class<?> getType();
+		public Class<?> getType();
 		
 	}
 
-	public static interface ActionSite {
+	public static interface ActionSite extends GraphElement {
 		
 		/** Global chronological sequence number */
 		public int getSeqNo();
 		
 		public Method getMethod();
+
+		public Method getMethod(Class<?> declaringClass);
 
 		/**
 		 * Runtime method may be not accurate due to nature of proxy class.
@@ -102,7 +110,7 @@ public interface ActionGraph {
 		
 	}
 	
-	public static interface Action {
+	public static interface Action extends GraphElement {
 
 		public ActionSite getSite();
 		

@@ -176,6 +176,22 @@ public class PowerBeanProxy implements InvocationHandler {
 		}
 
 		@Override
+		public Method getCastedMethod(Class<?> type) {
+		    if (m.getDeclaringClass() == type) {
+		        return m;
+		    }
+		    else {
+		        try {
+                    return type.getMethod(m.getName(), m.getParameterTypes());
+                } catch (SecurityException e) {
+                    throw new RuntimeException(e);
+                } catch (NoSuchMethodException e) {
+                    throw new IllegalArgumentException("Method " + m + " cannot be rebased to " + type);
+                }
+		    }
+		}
+		
+		@Override
 		public Object[] getArguments() {
 			return params;
 		}
@@ -259,6 +275,11 @@ public class PowerBeanProxy implements InvocationHandler {
 		public StackTraceElement[] getWholeTrace();
 		
 		public Method getMethod();
+
+		/**
+		 * @throws IllegalArgumentException if method cannot be rebased
+		 */
+		public Method getCastedMethod(Class<?> castBase);
 		
 		public Class<?> getReturnType();
 

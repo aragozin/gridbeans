@@ -218,7 +218,7 @@ public class FreeGraph implements ActionGraph {
 	}
 
 	@Override
-	public Set<Action> allConsumer(final Bean bean) {
+	public Set<Action> allConsumers(final Bean bean) {
 		verify(bean);
 		return searchActions(new Filter<CopyAction>() {
 			@Override
@@ -373,7 +373,7 @@ public class FreeGraph implements ActionGraph {
 	public void eliminate(Action action) {
 		CopyAction a = verify(action);
 		
-		if (a.resultBean == null && allConsumer(a.resultBean).isEmpty()) {
+		if (a.resultBean == null && allConsumers(a.resultBean).isEmpty()) {
 			removeActionInternal(a);
 			if (a.resultBean != null) {
 				beans.remove(a.resultBean);
@@ -427,6 +427,11 @@ public class FreeGraph implements ActionGraph {
 			stackTrace = site.getStackTrace();			
 		}
 		
+        @Override
+        public ActionGraph getGraph() {
+            return FreeGraph.this;
+        }
+		
 		@Override
 		public int getSeqNo() {
 			return seqNo;
@@ -437,6 +442,17 @@ public class FreeGraph implements ActionGraph {
 			return method;
 		}
 
+        @Override
+        public Method getMethod(Class<?> declaringClass) {
+            try {
+                return declaringClass.getMethod(method.getName(), method.getParameterTypes());
+            } catch (SecurityException e) {
+                throw new RuntimeException(e);
+            } catch (NoSuchMethodException e) {
+                throw new IllegalArgumentException(e.getMessage());
+            }
+        }
+		
 		@Override
 		public Set<Method> allMethodAliases() {
 			return methodAliases;
@@ -476,6 +492,11 @@ public class FreeGraph implements ActionGraph {
 				}
 			}
 		}
+		
+        @Override
+        public ActionGraph getGraph() {
+            return FreeGraph.this;
+        }
 		
 		@Override
 		public ActionSite getSite() {
@@ -519,6 +540,11 @@ public class FreeGraph implements ActionGraph {
 			type = external.getType();
 		}
 
+        @Override
+        public ActionGraph getGraph() {
+            return FreeGraph.this;
+        }
+		
 		@Override
 		public Class<?> getType() {
 			return type;

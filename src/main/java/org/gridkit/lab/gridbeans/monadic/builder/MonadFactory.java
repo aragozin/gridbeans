@@ -14,13 +14,16 @@ import org.gridkit.lab.gridbeans.ActionGraph.ActionSite;
 import org.gridkit.lab.gridbeans.ActionGraph.Bean;
 import org.gridkit.lab.gridbeans.ActionGraph.LocalBean;
 import org.gridkit.lab.gridbeans.ActionTracker;
+import org.gridkit.lab.gridbeans.PowerBeanProxy;
 import org.gridkit.lab.gridbeans.monadic.Checkpoint;
+import org.gridkit.lab.gridbeans.monadic.DeployerSPI;
 import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
 import org.gridkit.lab.gridbeans.monadic.Joinable;
 import org.gridkit.lab.gridbeans.monadic.Locator;
 import org.gridkit.lab.gridbeans.monadic.Monad;
 import org.gridkit.lab.gridbeans.monadic.MonadBuilder;
 import org.gridkit.lab.gridbeans.monadic.Wallclock;
+import org.gridkit.lab.gridbeans.monadic.spi.MonadExecutionEnvironment;
 
 public class MonadFactory implements MonadBuilder {
 
@@ -45,6 +48,17 @@ public class MonadFactory implements MonadBuilder {
             throw new RuntimeException(e);
         }
     }
+
+    private static Set<Method> EXPORT_CALL = new HashSet<Method>();
+    static {
+        try {
+            EXPORT_CALL.add(ExecutionTarget.class.getMethod("bean", Class.class, Object[].class));
+        } catch (SecurityException e) {
+            throw new RuntimeException(e);
+        } catch (NoSuchMethodException e) {
+            throw new RuntimeException(e);
+        }
+    }
     
     public static MonadBuilder build() {
         return new MonadFactory();
@@ -57,6 +71,7 @@ public class MonadFactory implements MonadBuilder {
     private ExecutionTarget root;
     private Map<String, Checkpoint> checkpoints = new HashMap<String, Checkpoint>();
     private List<CheckpointImpl> allCheckpoints = new ArrayList<CheckpointImpl>();
+    private List<Bean> locators = new ArrayList<ActionGraph.Bean>();
     private CheckpointImpl start;
     
     private List<Context> stack = new ArrayList<MonadFactory.Context>();
@@ -66,9 +81,9 @@ public class MonadFactory implements MonadBuilder {
     protected MonadFactory() {
         tracker = new MonadTracker();
         omniLocation = new Location(true);
-        omni = tracker.inject(omni, ExecutionTarget.class);
+        omni = tracker.inject("omni", ExecutionTarget.class);
         rootLocation = new Location(false);
-        root = tracker.inject(root, ExecutionTarget.class);
+        root = tracker.inject("root", ExecutionTarget.class);
         start = new CheckpointImpl(null);
         stack.add(new Context());        
         top().rewind(start);
@@ -77,17 +92,12 @@ public class MonadFactory implements MonadBuilder {
 
     @Override
     public <T extends Locator> T locator(Class<T> type) {
-        return omni.locator(type);
+        return root.locator(type);
     }
 
     @Override
-    public <T> T bean(Class<T> type) {
-        return omni.bean(type);
-    }
-
-    @Override
-    public <T> T bean(Class<T> type, Object identity) {
-        return omni.bean(type, identity);
+    public <T> T bean(Class<T> type, Object... lookupKeys) {
+        return omni.bean(type, lookupKeys);
     }
 
     
@@ -102,7 +112,7 @@ public class MonadFactory implements MonadBuilder {
     }
 
     @Override
-    public Checkpoint label(String labelId) {
+    public Checkpoint checkpoint(String labelId) {
         if (labelId == null) {
             throw new NullPointerException("label ID is null");
         }
@@ -174,7 +184,17 @@ public class MonadFactory implements MonadBuilder {
     @Override
     public Monad finish() {
         
-        return null;
+        RawGraphData rgd = new RawGraphData();
+        rgd.checkpoints = new RawGraphData.CheckpointInfo[allCheckpoints.size()];
+        for(int i = 0; i != rgd.checkpoints.length; ++i) {
+            CheckpointImpl ci = allCheckpoints.get(i);
+            rgd.checkpoints[i] = new RawGraphData.CheckpointInfo(ci.chckId, ci.name, ci.dependencies, ci.dependents, ci.site);
+        }
+        rgd.omniLocator = tracker.proxy2bean(omni);
+        rgd.rootLocator = tracker.proxy2bean(root);
+        rgd.locations = locators.toArray(new ActionGraph.Bean[0]);
+        
+        return new MonadGraph(rgd);
     }
 
     @Override
@@ -212,7 +232,7 @@ public class MonadFactory implements MonadBuilder {
                 // Locator calls is not part of graph
                 // Locator contract enforcing
                 Bean result = a.getResultBean();
-                if (result == null) {
+                if (result == null || result.getType() != ExecutionTarget.class) {
                     throw new IllegalArgumentException("Locator contract violation, call MUST return ExecutionTarget");
                 }
                 for(Bean b: a.getBeanParams()) {
@@ -220,11 +240,17 @@ public class MonadFactory implements MonadBuilder {
                         throw new IllegalArgumentException("Locator contract violation, locator cannot accept bean references as arguments");
                     }
                 }
+                locators.add(result);
             }
             else {
-                // Normal action, track checkpoint dependencies
-                top().addAction(a);
-            
+                boolean trackedAction = true;
+                for(Method m: LOCATOR_CALL) {
+                    if (a.getSite().allMethodAliases().contains(m)) {
+                        trackedAction = false;
+                        break;
+                    }
+                }
+                
                 // Validate deploy(...) call
                 for(Method m: DEPLOY_CALL) {
                     if (site.allMethodAliases().contains(m)) {
@@ -244,7 +270,51 @@ public class MonadFactory implements MonadBuilder {
                         if (a.getGroundParams()[1] == null) {
                             throw new IllegalArgumentException("null cannot be deployed");
                         }
+                        // validation passed, now rewrite graph
+                        trackedAction = false;
+                        
+                        @SuppressWarnings("unchecked")
+                        Class<Object> type = (Class<Object>) a.getGroundParams()[0];
+                        Object proto = a.getGroundParams()[1];
+                        ExecutionTarget et = (ExecutionTarget) bean2proxy(a.getHostBean());
+                        Object outbean = et.bean(DeployerSPI.class).deploy(type, proto);
+                        
+                        getGraph().unify(a, proxy2bean(outbean));
+                        
+                        break;
                     }
+                }
+
+                // Validate bean(...) call
+                for(Method m: EXPORT_CALL) {
+                    if (site.allMethodAliases().contains(m)) {
+                        trackedAction = false;
+                        Bean result = a.getResultBean();
+                        if (result == null) {
+                            Class<?> type = (Class<?>) a.getGroundParams()[0];
+                            if (type != null && !type.isInterface()) {
+                                throw new IllegalArgumentException("Bean type should be an interface, but class is passed [" + type.getName() + "]");
+                            }
+                            else {
+                                throw new IllegalArgumentException("Deployment failed, please verify parameters");
+                            }
+                        }
+                        Object[] varArg = (Object[]) a.getGroundParams()[1];
+                        if (varArg != null) {
+                            for(Object o: varArg) {
+                                if (PowerBeanProxy.getHandler(o) != null) {
+                                    throw new IllegalArgumentException("Beans cannot be used as lookup keys");
+                                }
+                            }
+                        }
+                        
+                        break;
+                    }
+                }
+                
+                if (trackedAction) {
+                    // Normal action, track checkpoint dependencies
+                    top().addAction(a);
                 }
             }
         }
@@ -416,8 +486,24 @@ public class MonadFactory implements MonadBuilder {
         
     }
     
-    private static class MonadGraph {
+    private static class MonadGraph implements Monad {
         
+        private RawGraphData graphData;
         
+        public MonadGraph(RawGraphData graphData) {
+            this.graphData = graphData;
+        }
+
+        @Override
+        public ExecutionClosure bind(MonadExecutionEnvironment environment) {
+            final RuntimeGraph rg = new RuntimeGraph(graphData, environment);
+            return new ExecutionClosure() {
+                
+                @Override
+                public void execute(ExecutionObserver observer) {
+                    rg.run(observer);
+                }
+            };
+        }
     }
 }

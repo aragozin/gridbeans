@@ -379,11 +379,11 @@ public class ActionTracker {
 		}
 
 		@Override
-		public Set<Action> allConsumer(final Bean bean) {
+		public Set<Action> allConsumers(final Bean bean) {
 			return searchActions(new Filter<Call>() {
 				@Override
 				public boolean eval(Call call) {
-					return Arrays.asList(call.getBeanParams()).contains(bean);
+					return call.getHostBean() == bean || Arrays.asList(call.getBeanParams()).contains(bean);
 				}
 			});
 		}
@@ -560,7 +560,7 @@ public class ActionTracker {
 		public void eliminate(Action action) {
 			Call a = verify(action);
 			
-			if (a.getResultBean() == null && allConsumer(a.getResultBean()).isEmpty()) {
+			if (a.getResultBean() == null && allConsumers(a.getResultBean()).isEmpty()) {
 				removeActionInternal(a);
 				if (a.getResultBean() != null) {
 					UniqueBean r = verify(a.getResultBean());
@@ -589,8 +589,13 @@ public class ActionTracker {
 	private class BeanHandle implements Bean {
 		
 		protected UniqueBean bean;
-		
+	
 		@Override
+        public ActionGraph getGraph() {
+            return ActionTracker.this.getGraph();
+        }
+
+        @Override
 		public Class<?> getType() {
 			return bean.runtimeType;
 		}
@@ -670,6 +675,11 @@ public class ActionTracker {
 		
 		private List<Call> dependencies = new ArrayList<Call>();
 
+        @Override
+        public ActionGraph getGraph() {
+            return ActionTracker.this.getGraph();
+        }
+		
 		@Override
 		public ActionSite getSite() {
 			return site;
@@ -719,6 +729,11 @@ public class ActionTracker {
 		private Method method;
 		private Set<Method> methodAliases;
 		private StackTraceElement[] trace;
+
+        @Override
+        public ActionGraph getGraph() {
+            return ActionTracker.this.getGraph();
+        }
 		
 		public ActionTracker getHost() {
 			return ActionTracker.this;
@@ -732,6 +747,17 @@ public class ActionTracker {
 		@Override
 		public Method getMethod() {
 			return method;
+		}
+
+		@Override
+		public Method getMethod(Class<?> declaringClass) {
+		    try {
+                return declaringClass.getMethod(method.getName(), method.getParameterTypes());
+            } catch (SecurityException e) {
+                throw new RuntimeException(e);
+            } catch (NoSuchMethodException e) {
+                throw new IllegalArgumentException(e.getMessage());
+            }
 		}
 		
 		@Override

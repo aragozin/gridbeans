@@ -1,9 +1,7 @@
 package org.gridkit.lab.gridbeans.monadic.spi;
 
 import java.lang.reflect.Method;
-import java.util.List;
-
-import org.gridkit.util.concurrent.FutureEx;
+import java.util.Set;
 
 public interface MonadExecutionEnvironment {
 
@@ -13,24 +11,67 @@ public interface MonadExecutionEnvironment {
 
         public ExecutionHost getHost();
         
-        public FutureEx<Void> fireVoid(Method m, Object... params);
-
-        public FutureEx<BeanHandle> fireAndReturn(Method m, Object... params);
-        
-    }
-    
-    public interface LocatorHander {
-        
-        List<ExecutionHost> resolveLocation(String methodName, Object... params);
+        public void fire(Invocation call, InvocationCallback callback);
         
     }
     
     public interface ExecutionHost {
 
-        public LocatorHander resolveLocator(Class<?> type, Object identity);
+        public Set<ExecutionHost> resolveLocator(Method method, Object[] params);
 
-        public BeanHandle resolveBean(Class<?> type, Object identity);
+        public void resolveBean(Class<?> type, Object[] identity, InvocationCallback callback);
+    }    
+    
+    public interface InvocationCallback {
         
-        public BeanHandle deploy(Object object);        
+        public void done(BeanHandle handle);
+
+        public void error(Exception error);
+        
+    }
+    
+    public static class Invocation {
+        
+        private Method method;
+        private Object[] groundParams;
+        private BeanHandle[] beanParams;
+        private Class<?> outputType;
+        
+        public Invocation(Method m) {
+            this.method = m;
+            groundParams = new Object[m.getParameterTypes().length];
+            beanParams = new BeanHandle[m.getParameterTypes().length];
+        }
+        
+        public void setGroundParam(int n, Object value) {
+            groundParams[n] = value;
+        }
+
+        public void setBeanParam(int n, BeanHandle handle) {
+            beanParams[n] = handle;
+        }
+        
+        public void setOutputType(Class<?> type) {
+            if (!type.isInterface()) {
+                throw new IllegalArgumentException("Should be an interface - " + type.getName());
+            }
+            outputType = type;
+        }
+        
+        public Method getMethod() {
+            return method;
+        }
+        
+        public Object getGroundParam(int n) {
+            return groundParams[n];
+        }
+
+        public BeanHandle getBeanParam(int n) {
+            return beanParams[n];
+        }
+        
+        public Class<?> getOutputType() {
+            return outputType;
+        }
     }
 }

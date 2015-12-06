@@ -4,7 +4,11 @@ import junit.framework.Assert;
 
 import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
 import org.gridkit.lab.gridbeans.monadic.Locator;
+import org.gridkit.lab.gridbeans.monadic.Monad;
+import org.gridkit.lab.gridbeans.monadic.Monad.ExecutionClosure;
 import org.gridkit.lab.gridbeans.monadic.MonadBuilder;
+import org.gridkit.lab.gridbeans.monadic.builder.MonadFactoryTest.CommonStuff;
+import org.gridkit.lab.gridbeans.monadic.spi.NullExecutionEnvironment;
 import org.junit.Test;
 
 public class MonadFactoryTest {
@@ -16,19 +20,40 @@ public class MonadFactoryTest {
         
         Cloud cloud = mb.locator(Cloud.class);
         MyDriver md = cloud.at("A").deploy(MyDriver.class, new MyBean());
+        MyDriver md2 = cloud.at("B").deploy(MyDriver.class, new MyBean());
         
         md.do1();
-        mb.join(mb.label("cp1"));
+        mb.join(mb.checkpoint("cp1"));
         md.do2();
-        mb.join(mb.label("cp2"));
+        mb.join(mb.checkpoint("cp2"));
 
-        mb.rewind(mb.label("cp1"));
+        mb.rewind(mb.checkpoint("cp1"));
         md.do1();
         mb.sync();
         md.do2();
-        mb.join(mb.label("cp2"));
+        mb.join(mb.checkpoint("cp2"));
+
+        mb.rewind(mb.checkpoint("cp1"));
+        md2.do1();
+        mb.sync();
+        md2.do2();
+        mb.join(mb.checkpoint("cp2"));
         
-        mb.finish();
+        mb.rewind();
+
+        CommonStuff cs = mb.bean(CommonStuff.class);
+        md.init(cs);
+        md2.init(cs);
+        mb.join(mb.checkpoint("cp1"));
+        
+        Monad m = mb.finish();
+        
+        NullExecutionEnvironment ne = new NullExecutionEnvironment();
+        
+        ne.root().createHost(Cloud.class).at("A");
+        ne.root().createHost(Cloud.class).at("B");
+        ExecutionClosure ec = m.bind(ne);        
+        new String();
     }
 
     @Test
@@ -114,8 +139,13 @@ public class MonadFactoryTest {
         }
     }
     
+    public interface CommonStuff {
+        
+    }
     
     public interface MyDriver {
+        
+        public void init(CommonStuff stuff);
         
         public void do1();
 
@@ -124,6 +154,10 @@ public class MonadFactoryTest {
     }
     
     public class MyBean implements MyDriver {
+
+        @Override
+        public void init(CommonStuff stuff) {
+        }
 
         @Override
         public void do1() {

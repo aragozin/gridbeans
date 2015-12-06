@@ -7,10 +7,10 @@ public class MonadicExample {
     public void test() {
         
         MonadBuilder builder = null;
-        Checkpoint lInit = builder.label("init"); 
-        Checkpoint lStart = builder.label("start"); 
-        Checkpoint lStop = builder.label("stop"); 
-        Checkpoint lDone = builder.label("done"); 
+        Checkpoint lInit = builder.checkpoint("init"); 
+        Checkpoint lStart = builder.checkpoint("start"); 
+        Checkpoint lStop = builder.checkpoint("stop"); 
+        Checkpoint lDone = builder.checkpoint("done"); 
         
         Cloud cloud = builder.locator(Cloud.class);
         MeteringDriver metering = builder.bean(MeteringDriver.class);

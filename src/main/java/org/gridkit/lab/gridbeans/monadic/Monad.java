@@ -10,8 +10,14 @@ import org.gridkit.lab.gridbeans.monadic.spi.MonadExecutionEnvironment;
  */
 public interface Monad {
 
-    public void execute(MonadExecutionEnvironment environment, ExecutionObserver observer);
+    public ExecutionClosure bind(MonadExecutionEnvironment environment);
 
+    public interface ExecutionClosure {
+        
+        public void execute(ExecutionObserver observer);
+        
+    }
+    
     public interface ExecutionObserver {
         
         public void fire(CallDescription call);

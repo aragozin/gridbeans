@@ -4,7 +4,7 @@ public interface MonadBuilder extends ExecutionTarget {
 
     public Checkpoint start();
 
-    public Checkpoint label(String labelId);
+    public Checkpoint checkpoint(String labelId);
     
     /**
      * Special locator to enforce bean execution of root location.
