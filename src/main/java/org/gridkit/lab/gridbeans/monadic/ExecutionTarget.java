@@ -6,5 +6,6 @@ public interface ExecutionTarget {
     
     public <T> T bean(Class<T> type, Object... lookupKeys);
 
+    @BeanShortcut(beanType = DeployerSPI.class)
     public <T, B extends T> T deploy(Class<T> intf, B bean);
 }

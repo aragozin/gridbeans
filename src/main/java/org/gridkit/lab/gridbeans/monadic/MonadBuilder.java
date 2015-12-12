@@ -15,7 +15,7 @@ public interface MonadBuilder extends ExecutionTarget {
     public void rewind(Checkpoint label);
 
     public void sync();
-    
+
     public void join(Checkpoint label);
 
     /**

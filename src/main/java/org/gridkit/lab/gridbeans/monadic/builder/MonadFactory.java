@@ -1,5 +1,7 @@
 package org.gridkit.lab.gridbeans.monadic.builder;
 
+import java.lang.annotation.Annotation;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -15,12 +17,16 @@ import org.gridkit.lab.gridbeans.ActionGraph.Bean;
 import org.gridkit.lab.gridbeans.ActionGraph.LocalBean;
 import org.gridkit.lab.gridbeans.ActionTracker;
 import org.gridkit.lab.gridbeans.PowerBeanProxy;
+import org.gridkit.lab.gridbeans.monadic.BeanShortcut;
+import org.gridkit.lab.gridbeans.monadic.BeanShortcut.BeanId;
 import org.gridkit.lab.gridbeans.monadic.Checkpoint;
 import org.gridkit.lab.gridbeans.monadic.DeployerSPI;
 import org.gridkit.lab.gridbeans.monadic.ExecutionGraph;
 import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
 import org.gridkit.lab.gridbeans.monadic.Joinable;
 import org.gridkit.lab.gridbeans.monadic.Locator;
+import org.gridkit.lab.gridbeans.monadic.LocatorShortcut;
+import org.gridkit.lab.gridbeans.monadic.LocatorShortcut.LocationId;
 import org.gridkit.lab.gridbeans.monadic.MonadBuilder;
 import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment;
 import org.gridkit.lab.gridbeans.monadic.Wallclock;
@@ -41,7 +47,7 @@ public class MonadFactory implements MonadBuilder {
     private static Set<Method> DEPLOY_CALL = new HashSet<Method>();
     static {
         try {
-            DEPLOY_CALL.add(ExecutionTarget.class.getMethod("deploy", Class.class, Object.class));
+            DEPLOY_CALL.add(DeployerSPI.class.getMethod("deploy", Class.class, Object.class));
         } catch (SecurityException e) {
             throw new RuntimeException(e);
         } catch (NoSuchMethodException e) {
@@ -159,7 +165,7 @@ public class MonadFactory implements MonadBuilder {
     
     @Override
     public void join(Checkpoint label) {
-        top().join(castCheckpoint(label));
+        top().join(castCheckpoint(label));        
     }
 
     @Override
@@ -191,7 +197,7 @@ public class MonadFactory implements MonadBuilder {
         rgd.checkpoints = new RawGraphData.CheckpointInfo[allCheckpoints.size()];
         for(int i = 0; i != rgd.checkpoints.length; ++i) {
             CheckpointImpl ci = allCheckpoints.get(i);
-            rgd.checkpoints[i] = new RawGraphData.CheckpointInfo(ci.chckId, ci.name, ci.dependencies, ci.dependents, ci.site);
+            rgd.checkpoints[i] = new RawGraphData.CheckpointInfo(ci.chckId, ci.name, ci.scoped, ci.dependencies, ci.dependents, ci.site);
         }
         rgd.omniLocator = tracker.proxy2bean(omni);
         rgd.rootLocator = tracker.proxy2bean(root);
@@ -231,94 +237,261 @@ public class MonadFactory implements MonadBuilder {
             }
             Action a = actions.iterator().next();
 
-            if (isLocator(a.getHostBean())) {
-                // Locator calls is not part of graph
-                // Locator contract enforcing
-                Bean result = a.getResultBean();
-                if (result == null || result.getType() != ExecutionTarget.class) {
-                    throw new IllegalArgumentException("Locator contract violation, call MUST return ExecutionTarget");
-                }
-                for(Bean b: a.getBeanParams()) {
-                    if (b != null) {
-                        throw new IllegalArgumentException("Locator contract violation, locator cannot accept bean references as arguments");
-                    }
-                }
-                locators.add(result);
+            if (processShortcut(a)) {
+                // action was transformed
+                return;
+            }
+            else if (isLocationCall(a)) {
+                validateLocationCall(a);
+                locators.add(a.getResultBean());
+                return;
+            }
+            else if (isLocatorCall(a)) {
+                validateLocatorCall(a);
+                return;
+            }
+            else if (isExportCall(a)) {
+                validateExportCall(a);
             }
             else {
-                boolean trackedAction = true;
-                for(Method m: LOCATOR_CALL) {
-                    if (a.getSite().allMethodAliases().contains(m)) {
-                        trackedAction = false;
-                        break;
-                    }
+                if (isDeployCall(a)) {
+                    validateDeployCall(a);
                 }
                 
-                // Validate deploy(...) call
-                for(Method m: DEPLOY_CALL) {
-                    if (site.allMethodAliases().contains(m)) {
-                        Bean result = a.getResultBean();
-                        if (result == null) {
-                            Class<?> type = (Class<?>) a.getGroundParams()[0];
-                            if (type != null && !type.isInterface()) {
-                                throw new IllegalArgumentException("Deploy type should be an interface, but class is passed [" + type.getName() + "]");
-                            }
-                            else {
-                                throw new IllegalArgumentException("Deployment failed, please verify parameters");
-                            }
-                        }
-                        if (a.getBeanParams()[1] != null) {
-                            throw new IllegalArgumentException("Real object required for deployment");
-                        }
-                        if (a.getGroundParams()[1] == null) {
-                            throw new IllegalArgumentException("null cannot be deployed");
-                        }
-                        // validation passed, now rewrite graph
-                        trackedAction = false;
-                        
-                        @SuppressWarnings("unchecked")
-                        Class<Object> type = (Class<Object>) a.getGroundParams()[0];
-                        Object proto = a.getGroundParams()[1];
-                        ExecutionTarget et = (ExecutionTarget) bean2proxy(a.getHostBean());
-                        Object outbean = et.bean(DeployerSPI.class).deploy(type, proto);
-                        
-                        getGraph().unify(a, proxy2bean(outbean));
-                        
-                        break;
-                    }
-                }
+                // Normal action, track checkpoint dependencies
+                top().addAction(a);
+            }
+        }
 
-                // Validate bean(...) call
-                for(Method m: EXPORT_CALL) {
-                    if (site.allMethodAliases().contains(m)) {
-                        trackedAction = false;
-                        Bean result = a.getResultBean();
-                        if (result == null) {
-                            Class<?> type = (Class<?>) a.getGroundParams()[0];
-                            if (type != null && !type.isInterface()) {
-                                throw new IllegalArgumentException("Bean type should be an interface, but class is passed [" + type.getName() + "]");
-                            }
-                            else {
-                                throw new IllegalArgumentException("Deployment failed, please verify parameters");
-                            }
-                        }
-                        Object[] varArg = (Object[]) a.getGroundParams()[1];
-                        if (varArg != null) {
-                            for(Object o: varArg) {
-                                if (PowerBeanProxy.getHandler(o) != null) {
-                                    throw new IllegalArgumentException("Beans cannot be used as lookup keys");
-                                }
-                            }
-                        }
-                        
-                        break;
+        private boolean processShortcut(Action a) {
+            try {
+                Method m = findAnnotatedMethod(a.getSite());
+                if (m != null) {
+                    if (m.getAnnotation(LocatorShortcut.class) != null) {
+                        a = shortcutLocator(m.getAnnotation(LocatorShortcut.class), m, a);
+                    }
+                    if (m.getAnnotation(BeanShortcut.class) != null) {
+                        shortcutBean(m.getAnnotation(BeanShortcut.class), m, a);
+                    }
+                    return true;
+                }
+                else {
+                    return false;
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("Error processing annotations on " + a, e);
+            }
+        }
+
+        private Action shortcutLocator(LocatorShortcut scut, Method m, Action a) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
+            Class<? extends Locator> type = scut.locatorType();
+            if (!type.isInterface()) {
+                throw new RuntimeException("Interface required: " + type.getName());
+            }
+            String method = scut.method();
+            List<Class<?>> locSig = new ArrayList<Class<?>>();
+            List<Object> locParams = new ArrayList<Object>();
+            collectParams(a, m, locSig, locParams, LocatorShortcut.LocationId.class);
+
+            Class<?>[] sig = locSig.toArray(new Class<?>[locSig.size()]);
+            Object[] args = locParams.toArray(new Object[locParams.size()]);
+            
+            ExecutionTarget host = (ExecutionTarget) bean2proxy(a.getHostBean());
+            Locator lt = host.locator(type);
+            Method mc = type.getMethod(method, sig);
+            mc.setAccessible(true);
+            Object location = mc.invoke(lt, args);
+            Bean lbean = proxy2bean(location);
+            getGraph().unify(a, lbean);
+            
+            return ((LocalBean)lbean).getOrigin();
+        }
+
+        private void shortcutBean(BeanShortcut bcut, Method m, Action a) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
+            Class<?> type = bcut.beanType();
+            if (!type.isInterface()) {
+                throw new RuntimeException("Interface required: " + type.getName());
+            }
+            String method = bcut.method();
+            if (method.length() == 0) {
+                method = m.getName();
+            }
+            List<Class<?>> bSig = new ArrayList<Class<?>>();
+            List<Object> bParams = new ArrayList<Object>();
+            collectParams(a, m, bSig, bParams, BeanShortcut.BeanId.class);
+
+            List<Class<?>> cSig = new ArrayList<Class<?>>();
+            List<Object> cParams = new ArrayList<Object>();
+            collectParams(a, m, cSig, cParams, null);
+
+            Object[] beanId = bParams.toArray(new Object[bParams.size()]);
+
+            Class<?>[] sig = cSig.toArray(new Class<?>[cSig.size()]);
+            Object[] args = cParams.toArray(new Object[cParams.size()]);
+            
+            ExecutionTarget host = (ExecutionTarget) bean2proxy(a.getHostBean());
+            Object bean = host.bean(type, beanId);
+            Method mc = type.getMethod(method, sig);
+            mc.setAccessible(true);
+            Object result = mc.invoke(bean, args);
+            if (a.getSite().getMethod().equals(m)) {
+                // shortcuted action should be eliminated                
+                if (result != null) {
+                    Bean lbean = proxy2bean(result);
+                    getGraph().unify(a, lbean);
+                }
+                else {
+                    getGraph().eliminate(a);
+                }
+            }
+        }
+        
+        private void collectParams(Action a, Method m, List<Class<?>> matchedSignature, List<Object> matchedParams, Class<? extends Annotation> anno) {
+            Annotation[][] pa = m.getParameterAnnotations();
+            Class<?>[] p = m.getParameterTypes();
+            for(int i = 0; i != p.length; ++i) {
+                if (match(pa[i], anno)) {
+                    addParam(a, matchedSignature, matchedParams, p, i);
+                }
+            }
+        }
+
+        protected void addParam(Action a, List<Class<?>> matchedSignature, List<Object> matchedParams, Class<?>[] p, int i) {
+            matchedSignature.add(p[i]);
+            if (a.getBeanParams()[i] != null) {
+                matchedParams.add(a.getBeanParams()[i]);
+            }
+            else {
+                matchedParams.add(a.getGroundParams()[i]);
+            }
+        }
+
+        private boolean match(Annotation[] annotations, Class<? extends Annotation> anno) {
+            if (anno == null) {
+                for(Annotation a: annotations) {
+                    if (a instanceof BeanId || a instanceof LocationId) {
+                        return false;
+                    }
+                }                
+                return true;
+            }
+            else {
+                for(Annotation a: annotations) {
+                    if (anno.isInstance(a)) {
+                        return true;
                     }
                 }
-                
-                if (trackedAction) {
-                    // Normal action, track checkpoint dependencies
-                    top().addAction(a);
+                return false;
+            }
+        }
+
+        private Method findAnnotatedMethod(ActionSite site) {
+            Method m = null;
+            for(Method x: site.allMethodAliases()) {
+                if ((x.getAnnotation(LocatorShortcut.class) != null)||(x.getAnnotation(BeanShortcut.class) != null)) {
+                    if (m == null) {
+                        m = x;
+                    }
+                    else {
+                        throw new RuntimeException("Ambigous annotations for method [" + site.getMethod().getName() + "]");
+                    }
                 }
+            }
+            return m;
+        }
+
+        private boolean isLocatorCall(Action a) {
+            for(Method m: LOCATOR_CALL) {
+                if (a.getSite().allMethodAliases().contains(m)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void validateLocatorCall(Action a) {
+            // no validation            
+        }
+
+        private boolean isLocationCall(Action a) {            
+            return isLocator(a.getHostBean());
+        }
+
+        private void validateLocationCall(Action a) {
+            // Location (scope) calls is not part of graph
+            // Additional contract is enforced
+            Bean result = a.getResultBean();
+            if (result == null || !ExecutionTarget.class.isAssignableFrom(result.getType())) {
+                throw new IllegalArgumentException("Locator contract violation, call MUST return ExecutionTarget");
+            }
+            for(Bean b: a.getBeanParams()) {
+                if (b != null) {
+                    throw new IllegalArgumentException("Locator contract violation, locator cannot accept bean references as arguments");
+                }
+            }
+        }
+
+        private boolean isExportCall(Action a) {
+            for(Method m: EXPORT_CALL) {
+                if (a.getSite().allMethodAliases().contains(m)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void validateExportCall(Action a) {
+            // Export call is special case
+            // Extra validation applies          
+            
+            Bean result = a.getResultBean();
+            if (result == null) {
+                Class<?> type = (Class<?>) a.getGroundParams()[0];
+                if (type != null && !type.isInterface()) {
+                    throw new IllegalArgumentException("Bean type should be an interface, but class is passed [" + type.getName() + "]");
+                }
+                else {
+                    throw new IllegalArgumentException("Deployment failed, please verify parameters");
+                }
+            }
+            Object[] varArg = (Object[]) a.getGroundParams()[1];
+            if (varArg != null) {
+                for(Object o: varArg) {
+                    if (PowerBeanProxy.getHandler(o) != null) {
+                        throw new IllegalArgumentException("Beans cannot be used as lookup keys");
+                    }
+                }
+            }
+        }
+
+        private boolean isDeployCall(Action a) {
+            for(Method m: DEPLOY_CALL) {
+                if (a.getSite().allMethodAliases().contains(m)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void validateDeployCall(Action a) {
+            // deploy(...) is a regular action, 
+            // but extra validation applies 
+            
+            Bean result = a.getResultBean();
+            if (result == null) {
+                Class<?> type = (Class<?>) a.getGroundParams()[0];
+                if (type != null && !type.isInterface()) {
+                    throw new IllegalArgumentException("Deploy type should be an interface, but class is passed [" + type.getName() + "]");
+                }
+                else {
+                    throw new IllegalArgumentException("Deployment failed, please verify parameters");
+                }
+            }
+            if (a.getBeanParams()[1] != null) {
+                throw new IllegalArgumentException("Real object required for deployment");
+            }
+            if (a.getGroundParams()[1] == null) {
+                throw new IllegalArgumentException("null cannot be deployed");
             }
         }
 
@@ -442,6 +615,7 @@ public class MonadFactory implements MonadBuilder {
         {
             allCheckpoints.add(this);
         }
+        boolean scoped = false;
         StackTraceElement[] site;
         
         List<ActionGraph.Action> dependencies = new ArrayList<ActionGraph.Action>();
@@ -451,6 +625,7 @@ public class MonadFactory implements MonadBuilder {
         public CheckpointImpl() {
             // TODO trim
             this.site = Thread.currentThread().getStackTrace();
+            scoped = true;
         }
 
         public CheckpointImpl(String name) {

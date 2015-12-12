@@ -345,6 +345,9 @@ class RuntimeGraph {
                 pa.action = a;
                 protoActions.put(a, pa);
                 ActionGraph.Bean host = a.getHostBean();
+                if (locations.contains(host)) {
+                    throw new IllegalArgumentException("Broken graph, action on locator: " + a);
+                }
                 initProtoBean(host);
                 for(ActionGraph.Bean ab: a.getBeanParams()) {
                     if (ab != null) {
