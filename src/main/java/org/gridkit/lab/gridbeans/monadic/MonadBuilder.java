@@ -37,7 +37,7 @@ public interface MonadBuilder extends ExecutionTarget {
     /**
      * Finalize and return execution graph. 
      */
-    public Monad finish(); 
+    public ExecutionGraph finish(); 
     
     // Utility methods
     

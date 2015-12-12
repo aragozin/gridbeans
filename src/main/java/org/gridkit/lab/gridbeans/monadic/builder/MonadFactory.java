@@ -17,13 +17,13 @@ import org.gridkit.lab.gridbeans.ActionTracker;
 import org.gridkit.lab.gridbeans.PowerBeanProxy;
 import org.gridkit.lab.gridbeans.monadic.Checkpoint;
 import org.gridkit.lab.gridbeans.monadic.DeployerSPI;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph;
 import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
 import org.gridkit.lab.gridbeans.monadic.Joinable;
 import org.gridkit.lab.gridbeans.monadic.Locator;
-import org.gridkit.lab.gridbeans.monadic.Monad;
 import org.gridkit.lab.gridbeans.monadic.MonadBuilder;
+import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment;
 import org.gridkit.lab.gridbeans.monadic.Wallclock;
-import org.gridkit.lab.gridbeans.monadic.spi.MonadExecutionEnvironment;
 
 public class MonadFactory implements MonadBuilder {
 
@@ -135,9 +135,12 @@ public class MonadFactory implements MonadBuilder {
     public void rewind(Checkpoint label) {
         if (label == null) {
             rewind(start);
-        }
+        } 
         else if (!(label instanceof CheckpointImpl)) {
-            throw new IllegalArgumentException("Unsupported checkpoint ref: " + label); 
+            throw new IllegalArgumentException("Unsupported checkpoint ref: " + label);
+        }
+        else {
+            top().rewind((CheckpointImpl) label);
         }
     }
 
@@ -182,7 +185,7 @@ public class MonadFactory implements MonadBuilder {
     }
 
     @Override
-    public Monad finish() {
+    public ExecutionGraph finish() {
         
         RawGraphData rgd = new RawGraphData();
         rgd.checkpoints = new RawGraphData.CheckpointInfo[allCheckpoints.size()];
@@ -486,7 +489,7 @@ public class MonadFactory implements MonadBuilder {
         
     }
     
-    private static class MonadGraph implements Monad {
+    private static class MonadGraph implements ExecutionGraph {
         
         private RawGraphData graphData;
         
@@ -495,7 +498,7 @@ public class MonadFactory implements MonadBuilder {
         }
 
         @Override
-        public ExecutionClosure bind(MonadExecutionEnvironment environment) {
+        public ExecutionClosure bind(RuntimeEnvironment environment) {
             final RuntimeGraph rg = new RuntimeGraph(graphData, environment);
             return new ExecutionClosure() {
                 

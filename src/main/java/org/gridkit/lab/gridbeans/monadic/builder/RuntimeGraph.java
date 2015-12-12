@@ -10,16 +10,24 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 
 import org.gridkit.lab.gridbeans.ActionGraph;
+import org.gridkit.lab.gridbeans.ActionGraph.ActionSite;
 import org.gridkit.lab.gridbeans.ActionGraph.Bean;
 import org.gridkit.lab.gridbeans.ActionGraph.LocalBean;
 import org.gridkit.lab.gridbeans.monadic.Checkpoint;
 import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
-import org.gridkit.lab.gridbeans.monadic.Monad.ExecutionObserver;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.CallDescription;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.CheckpointDescription;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.ExecutionObserver;
+import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment;
+import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment.BeanHandle;
+import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment.ExecutionHost;
+import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment.Invocation;
+import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment.InvocationCallback;
 import org.gridkit.lab.gridbeans.monadic.builder.RawGraphData.CheckpointInfo;
-import org.gridkit.lab.gridbeans.monadic.spi.MonadExecutionEnvironment;
-import org.gridkit.lab.gridbeans.monadic.spi.MonadExecutionEnvironment.ExecutionHost;
 
 class RuntimeGraph {
 
@@ -35,21 +43,236 @@ class RuntimeGraph {
     }
 
     
-    private MonadExecutionEnvironment environment;
+    private RuntimeEnvironment environment;
     private List<CheckpointState> checkpoints = new ArrayList<CheckpointState>();
     private List<Action> actions = new ArrayList<Action>();
     private List<BeanHolder> beans = new ArrayList<BeanHolder>();
+    private ExecutionObserver observer;
+
+    private int pendingCount;
+    private BlockingQueue<Runnable> reactionQueue;
+    private Exception failure;
     
-    public RuntimeGraph(RawGraphData graph, MonadExecutionEnvironment environment) {
+    public RuntimeGraph(RawGraphData graph, RuntimeEnvironment environment) {
         this.environment = environment;
         new GraphProcessor(graph).process();
     }
 
     public void run(ExecutionObserver observer) {
-        // TODO Auto-generated method stub
-        
+        initState();
+        this.observer = observer != null ? observer : new NullObserver();
+        start();
     }
     
+    private void start() {
+        pendingCount = 0;
+        reactionQueue = new ArrayBlockingQueue<Runnable>(actions.size() + beans.size());
+        for(CheckpointState cs: checkpoints) {
+            if (cs.seqNo == 0) {
+                completed(cs);
+                break;
+            }
+        }
+
+        try {
+            loop();
+        } catch (InterruptedException e) {
+            throw new RuntimeException("Interrupted");
+        }
+        if (failure != null) {
+            if (failure instanceof RuntimeException) {
+                throw (RuntimeException)failure;
+            }
+            else {
+                throw new RuntimeException(failure);
+            }
+        }
+    }
+
+    private void loop() throws InterruptedException {
+        while(failure == null) {
+            List<Runnable> buf = new ArrayList<Runnable>();
+            reactionQueue.drainTo(buf);
+            for(Runnable r: buf) {
+                r.run();
+            }
+            if (pendingCount == 0) {
+                if (isFinished()) {
+                    finish();
+                }
+                else {
+                    failExecution(new RuntimeException("Deadlock"));
+                }
+                break;
+            }
+            reactionQueue.take().run();
+        }
+    }
+
+    private void finish() {
+        observer.onFinish();       
+    }
+
+    private boolean isFinished() {
+        for(Action a: actions) {
+            if (!a.completed) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    protected void completed(CheckpointState cs) {
+        cs.passed = true;
+        observer.onCheckpoint(new ChDescr(cs));
+        for(Action a: cs.dependents) {
+            reviewAction(a);
+        }        
+    }
+
+    protected void completed(Action action) {
+        observer.onComplete(new CallDescr(action));
+        for(CheckpointState cs: action.dependents) {
+            reviewCheckpoint(cs);
+        }        
+    }
+    
+    protected void available(BeanHolder holder) {
+        for(Action action: holder.dependents) {
+            reviewAction(action);
+        }
+    }
+
+    private void reviewAction(Action a) {
+        if (!a.started) {
+            if (isExecutionReady(a)) {
+                prepareDeps(a);
+                if (isDataReady(a)) {
+                    doFire(a);
+                }
+            }
+        }
+    }
+
+    private void reviewCheckpoint(CheckpointState cs) {
+        if (!cs.passed) {
+            if (isExecutionReady(cs)) {
+                completed(cs);
+            }
+        }
+    }
+    
+    private void prepareDeps(Action a) {
+        for(BeanHolder b: a.beanDeps) {
+            if (b.lookupId != null) {
+                if (!b.requested) {
+                    doExport(b);
+                }
+            }
+        }        
+    }
+
+    private void doExport(final BeanHolder b) {
+        ++pendingCount;
+        b.requested = true;        
+        b.host.resolveBean(b.lookupId.lookupType, b.lookupId.lookupId, new DefereCallback() {
+            
+            @Override
+            public void onError(Exception error) {
+                failExecution(new RuntimeException("Failed to resove bean " + b, error));
+            }
+            
+            @Override
+            public void onDone(BeanHandle handle) {
+                b.handle = handle;
+                available(b);                
+            }
+        });
+    }
+
+    private void doFire(final Action action) {
+        ++pendingCount;
+        action.started = true;
+        observer.onFire(new CallDescr(action));
+        BeanHandle handle = action.hostBean.handle;
+        handle.fire(action.toInvocation(), new DefereCallback() {
+            
+            @Override
+            public void onError(Exception error) {
+                action.error = error;
+                observer.onComplete(new CallDescr(action));
+                failExecution(error);                
+            }
+            
+            @Override
+            public void onDone(BeanHandle handle) {
+                action.completed = true;
+                if (action.outputBean != null) {
+                    action.outputBean.handle = handle;
+                }
+                completed(action);          
+                if (action.outputBean != null) {
+                    available(action.outputBean);
+                }
+            }
+        });
+    }
+    
+    private boolean isExecutionReady(Action a) {
+        for(CheckpointState cs: a.checkpointDeps) {
+            if (!cs.passed) {
+                return false;
+            }
+        }
+        
+        for(BeanHolder b: a.beanDeps) {
+            if (b.producerAction != null) {
+                if (!b.producerAction.completed) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private boolean isExecutionReady(CheckpointState cs) {
+        for(Action a: cs.dependencies) {
+            if (!a.completed) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isDataReady(Action a) {
+        for(BeanHolder b: a.beanDeps) {
+            if (b.handle == null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void failExecution(Exception e) {
+        observer.onFailure(e);
+        failure = e;
+    }
+    
+    private void initState() {
+        for(Action a: actions) {
+            a.completed = false;
+            a.error = null;
+            a.started = false;
+        }
+        for(BeanHolder b: beans) {
+            b.handle = null;
+            b.requested = false;
+        }
+        for(CheckpointState cs: checkpoints) {
+            cs.passed = false;
+        }
+    }
+
     private class GraphProcessor {
         
         private ActionGraph graph;
@@ -84,6 +307,7 @@ class RuntimeGraph {
             resolveLocations();
             processCheckpoints();
             processActions();
+            initDependencies();
         }
 
         protected void initCheckpoints() {
@@ -199,7 +423,7 @@ class RuntimeGraph {
                 Method m = li.getSite().getMethod(lclass);
                 Object[] params = li.getGroundParams();
                 
-                Set<ExecutionHost> th = new LinkedHashSet<MonadExecutionEnvironment.ExecutionHost>();
+                Set<ExecutionHost> th = new LinkedHashSet<RuntimeEnvironment.ExecutionHost>();
                 for (ExecutionHost h: eh) {
                     for(ExecutionHost sl: h.resolveLocator(m, params)) {
                         th.add(sl);
@@ -230,17 +454,6 @@ class RuntimeGraph {
                         ++nUnresolved;
                     }
                 }
-//                for(ProtoBean pb: exportedBeans.values()) {
-//                    int n = pb.locators.size();
-//                    tryLocalize(pb);
-//                    if (pb.locators.isEmpty()) {
-//                        ++nUnresolved;
-//                    }
-//                    else if (n != pb.locators.size()) {
-//                        ++nResolved;
-//                        
-//                    }
-//                }
                 
                 if (nUnresolved == 0 && changeCounter == 0) {
                     break;
@@ -420,7 +633,7 @@ class RuntimeGraph {
         }
 
         private Set<ExecutionHost> targetsFor(Set<Bean> locators) {
-            Set<ExecutionHost> targets = new LinkedHashSet<MonadExecutionEnvironment.ExecutionHost>();
+            Set<ExecutionHost> targets = new LinkedHashSet<RuntimeEnvironment.ExecutionHost>();
             for(Bean locator: locators) {
                 if (locator != omniLocator) {
                     for(ExecutionHost host: resolved.get(locator)) {
@@ -430,6 +643,28 @@ class RuntimeGraph {
             }
             
             return targets;
+        }
+        
+        private void initDependencies() {
+            for(Action a: actions) {
+                for(BeanHolder bh: a.beanDeps) {
+                    bh.dependents.add(a);
+                }
+            }
+            for(CheckpointState cs: checkpoints) {
+                for(Action a: cs.dependents) {
+                    a.checkpointDeps.add(cs);
+                }
+                for(Action a: cs.dependencies) {
+                    a.dependents.add(cs);
+                }
+            }
+            
+            for(Action a: actions) {
+                System.out.println("ACTION " + a);
+                System.out.println(" -> " + a.checkpointDeps);
+                System.out.println(" -> " + a.dependents);
+            }
         }
     };
     
@@ -455,7 +690,7 @@ class RuntimeGraph {
         ActionGraph.Action source;
         
         int actionId;
-        MonadExecutionEnvironment.ExecutionHost host;
+        RuntimeEnvironment.ExecutionHost host;
         BeanHolder hostBean;
         Method method;
         Object[] groundParams;
@@ -473,6 +708,22 @@ class RuntimeGraph {
         
         public String toString() {
             return hostBean + "." + method.getName() + "()";
+        }
+
+        public Invocation toInvocation() {
+            Invocation call = new Invocation(method);
+            for(int i = 0; i != beanParams.length; ++i) {
+                if (beanParams[i] != null) {
+                    call.setBeanParam(i, beanParams[i].handle);
+                }
+                else {
+                    call.setGroundParam(i, groundParams[i]);
+                }
+            }
+            if (outputBean != null) {
+                call.setOutputType(outputBean.beanType);
+            }
+            return call;
         }
     }
     
@@ -498,7 +749,7 @@ class RuntimeGraph {
         int beanId;
         
         Class<?> beanType;
-        MonadExecutionEnvironment.ExecutionHost host;
+        RuntimeEnvironment.ExecutionHost host;
         
         // bean can be either
         // produced by action
@@ -508,7 +759,9 @@ class RuntimeGraph {
         
         // state
         boolean requested;
-        MonadExecutionEnvironment.BeanHandle handle;
+        RuntimeEnvironment.BeanHandle handle;
+        
+        List<Action> dependents = new ArrayList<RuntimeGraph.Action>();
         
         public String toString() {
             if (producerAction != null) {
@@ -626,5 +879,150 @@ class RuntimeGraph {
             }
         }
         throw new RuntimeException("No such action found");
+    }
+    
+    private static class ChDescr implements CheckpointDescription {
+        
+        private CheckpointState ch;
+
+        public ChDescr(CheckpointState ch) {
+            this.ch = ch;
+        }
+
+        @Override
+        public String getName() {
+            return ch.toString();
+        }
+        
+        public String toString() {
+            return ch.toString();
+        }
+    }
+    
+    private static class CallDescr implements CallDescription {
+        
+        private Action action;
+
+        public CallDescr(Action action) {
+            this.action = action;
+        }
+
+        @Override
+        public int getCallId() {
+            return action.actionId;
+        }
+
+        @Override
+        public Object getExecutionHost() {
+            return action.host.toString();
+        }
+
+        @Override
+        public Object getBeanReference() {
+            return action.hostBean.toString();
+        }
+
+        @Override
+        public ActionSite getCallSite() {
+            return action.source.getSite();
+        }
+
+        @Override
+        public String[] getParamDescription() {
+            String[] params = new String[action.beanParams.length];
+            for(int i = 0; i != params.length; ++i) {
+                if (action.beanParams[i] != null) {
+                    params[i] = action.beanParams[i].toString();
+                }
+                else {
+                    params[i] = String.valueOf(action.groundParams[i]);
+                }
+            }
+            return params;
+        }
+
+        @Override
+        public boolean hasOutput() {
+            return action.outputBean != null;
+        }
+
+        @Override
+        public String getResultDescription() {
+            if (action.outputBean != null) {
+                return action.outputBean.toString();
+            }
+            else {
+                return null;
+            }
+        }
+
+        @Override
+        public Throwable getException() {
+            return action.error;
+        }
+        
+        public String toString() {
+            return action.toString();
+        }
+    }
+    
+    private static class NullObserver implements ExecutionObserver {
+
+        @Override
+        public void onFire(CallDescription call) {
+        }
+
+        @Override
+        public void onComplete(CallDescription call) {
+        }
+
+        @Override
+        public void onCheckpoint(CheckpointDescription checkpoint) {
+        }
+
+        @Override
+        public void onFailure(Exception error) {
+        }
+
+        @Override
+        public void onFinish() {
+        }
+    }
+    
+    private abstract class DefereCallback implements InvocationCallback {
+
+        @Override
+        public final void done(final BeanHandle handle) {
+            try {
+                reactionQueue.put(new Runnable() {
+                    @Override
+                    public void run() {
+                        --pendingCount;
+                        onDone(handle);
+                    }
+                });
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }            
+        }
+
+        @Override
+        public final void error(final Exception error) {
+            try {
+                reactionQueue.put(new Runnable() {
+                    @Override
+                    public void run() {
+                        --pendingCount;
+                        onError(error);
+                    }
+                });
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }            
+        }
+        
+        public abstract void onDone(BeanHandle handle);
+
+        public abstract void onError(Exception error);     
     }
 }

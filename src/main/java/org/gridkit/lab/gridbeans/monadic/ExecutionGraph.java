@@ -1,16 +1,15 @@
 package org.gridkit.lab.gridbeans.monadic;
 
 import org.gridkit.lab.gridbeans.ActionGraph;
-import org.gridkit.lab.gridbeans.monadic.spi.MonadExecutionEnvironment;
 
 /**
  * Encapsulated definition of complex execution graph.
  * 
  * @author Alexey Ragozin (alexey.ragozin@gmail.com)
  */
-public interface Monad {
+public interface ExecutionGraph {
 
-    public ExecutionClosure bind(MonadExecutionEnvironment environment);
+    public ExecutionClosure bind(RuntimeEnvironment environment);
 
     public interface ExecutionClosure {
         
@@ -20,13 +19,21 @@ public interface Monad {
     
     public interface ExecutionObserver {
         
-        public void fire(CallDescription call);
+        public void onFire(CallDescription call);
 
-        public void complete(CallDescription call);
+        public void onComplete(CallDescription call);
         
-        public void checkpoint(String name);
+        public void onCheckpoint(CheckpointDescription checkpoint);
 
-        public void finish();
+        public void onFailure(Exception error);
+        
+        public void onFinish();
+    }
+    
+    public interface CheckpointDescription {
+        
+        public String getName();
+        
     }
     
     public interface CallDescription {
@@ -41,7 +48,7 @@ public interface Monad {
 
         public String[] getParamDescription();
 
-        public boolean isVoid();
+        public boolean hasOutput();
         
         public String getResultDescription();
 

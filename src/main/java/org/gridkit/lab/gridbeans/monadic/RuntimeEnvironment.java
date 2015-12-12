@@ -1,9 +1,9 @@
-package org.gridkit.lab.gridbeans.monadic.spi;
+package org.gridkit.lab.gridbeans.monadic;
 
 import java.lang.reflect.Method;
 import java.util.Set;
 
-public interface MonadExecutionEnvironment {
+public interface RuntimeEnvironment {
 
     public ExecutionHost root();
     

@@ -4,8 +4,8 @@ import junit.framework.Assert;
 
 import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
 import org.gridkit.lab.gridbeans.monadic.Locator;
-import org.gridkit.lab.gridbeans.monadic.Monad;
-import org.gridkit.lab.gridbeans.monadic.Monad.ExecutionClosure;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.ExecutionClosure;
 import org.gridkit.lab.gridbeans.monadic.MonadBuilder;
 import org.gridkit.lab.gridbeans.monadic.builder.MonadFactoryTest.CommonStuff;
 import org.gridkit.lab.gridbeans.monadic.spi.NullExecutionEnvironment;
@@ -46,13 +46,14 @@ public class MonadFactoryTest {
         md2.init(cs);
         mb.join(mb.checkpoint("cp1"));
         
-        Monad m = mb.finish();
+        ExecutionGraph m = mb.finish();
         
         NullExecutionEnvironment ne = new NullExecutionEnvironment();
         
         ne.root().createHost(Cloud.class).at("A");
         ne.root().createHost(Cloud.class).at("B");
-        ExecutionClosure ec = m.bind(ne);        
+        ExecutionClosure ec = m.bind(ne);
+        ec.execute(new PrintObserver());
         new String();
     }
 

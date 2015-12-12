@@ -9,9 +9,10 @@ import java.util.Set;
 
 import org.gridkit.lab.gridbeans.PowerBeanProxy;
 import org.gridkit.lab.gridbeans.PowerBeanProxy.InvocationProcessor;
+import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment;
 import org.gridkit.lab.gridbeans.monadic.Locator;
 
-public class NullExecutionEnvironment implements MonadExecutionEnvironment {
+public class NullExecutionEnvironment implements RuntimeEnvironment {
 
     private static final Method CREATE_HOST_METHOD;
 
@@ -47,7 +48,7 @@ public class NullExecutionEnvironment implements MonadExecutionEnvironment {
     private class HostStub implements NullExecutionHost, InvocationProcessor {
 
         String name;
-        Map<Location, ExecutionHost> locations = new HashMap<NullExecutionEnvironment.Location, MonadExecutionEnvironment.ExecutionHost>();
+        Map<Location, ExecutionHost> locations = new HashMap<NullExecutionEnvironment.Location, RuntimeEnvironment.ExecutionHost>();
         NullExecutionHost nullDelegate;
         
         public HostStub(String name) {
