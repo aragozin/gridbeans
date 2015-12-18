@@ -1,14 +1,25 @@
 package org.gridkit.lab.gridbeans.monadic.builder;
 
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
 import junit.framework.Assert;
 
-import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
-import org.gridkit.lab.gridbeans.monadic.Locator;
+import org.gridkit.lab.gridbeans.monadic.DeployerSPI;
 import org.gridkit.lab.gridbeans.monadic.ExecutionGraph;
 import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.ExecutionClosure;
+import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
+import org.gridkit.lab.gridbeans.monadic.Locator;
 import org.gridkit.lab.gridbeans.monadic.MonadBuilder;
-import org.gridkit.lab.gridbeans.monadic.builder.MonadFactoryTest.CommonStuff;
+import org.gridkit.lab.gridbeans.monadic.Wallclock;
+import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment.BeanHandle;
+import org.gridkit.lab.gridbeans.monadic.spi.ClockBean;
+import org.gridkit.lab.gridbeans.monadic.spi.DirectBeanHandle;
+import org.gridkit.lab.gridbeans.monadic.spi.ExecutorDeployService;
+import org.gridkit.lab.gridbeans.monadic.spi.GenericEnvironment;
 import org.gridkit.lab.gridbeans.monadic.spi.NullExecutionEnvironment;
+import org.gridkit.lab.gridbeans.monadic.spi.GenericEnvironment.HostBuilder;
 import org.junit.Test;
 
 public class MonadFactoryTest {
@@ -38,6 +49,14 @@ public class MonadFactoryTest {
         mb.sync();
         md2.do2();
         mb.join(mb.checkpoint("cp2"));
+
+        mb.rewind(mb.checkpoint("cp1"));
+        md.do1();
+        md2.do1();
+        mb.checkpoint();
+        md.do2();
+        md2.do2();
+        mb.join(mb.checkpoint("cp2"));
         
         mb.rewind();
 
@@ -57,6 +76,80 @@ public class MonadFactoryTest {
         new String();
     }
 
+    @Test
+    public void smoke_on_executor_target() {
+        
+        MonadBuilder mb = MonadFactory.build();
+        
+        Cloud cloud = mb.locator(Cloud.class);
+        MyDriver md = cloud.at("A").deploy(MyDriver.class, new MyBean());
+        MyDriver md2 = cloud.at("B").deploy(MyDriver.class, new MyBean());
+        
+        md.do1();
+        mb.join(mb.checkpoint("cp1"));
+        md.do2();
+        mb.join(mb.checkpoint("cp2"));
+
+        mb.rewind(mb.checkpoint("cp1"));
+        md.do1();
+        mb.sync();
+        md.do2();
+        mb.join(mb.checkpoint("cp2"));
+
+        mb.rewind(mb.checkpoint("cp1"));
+        md2.do1();
+        mb.sync();
+        md2.do2();
+        mb.join(mb.checkpoint("cp2"));
+
+        mb.rewind(mb.checkpoint("cp1"));
+        md.do1();
+        md2.do1();
+        mb.checkpoint();
+        md.do2();
+        md2.do2();
+        mb.join(mb.checkpoint("cp2"));
+
+        mb.rewind(mb.checkpoint("cp1"));
+        mb.wallclock().delay(1, TimeUnit.SECONDS);
+        mb.join(mb.checkpoint("cp2"));
+        
+        mb.rewind();
+
+        CommonStuff cs = mb.bean(CommonStuff.class);
+        md.init(cs);
+        md2.init(cs);
+        mb.join(mb.checkpoint("cp1"));
+        
+        ExecutionGraph m = mb.finish();
+        
+        Executor exec = Executors.newSingleThreadExecutor();
+        
+        GenericEnvironment gen = new GenericEnvironment();
+        
+        HostBuilder hostA = gen.createHost("A");
+        HostBuilder hostB = gen.createHost("B");
+        
+        gen.rootBuilder().injectLocation(hostA.getHost(), Cloud.class).at("A");
+        gen.rootBuilder().injectLocation(hostB.getHost(), Cloud.class).at("B");
+
+        gen.rootBuilder().injectBean(new ClockBean(gen.root()), Wallclock.class);
+        
+        ExecutorDeployService depA = new ExecutorDeployService(hostA.getHost(), exec);
+        ExecutorDeployService depB = new ExecutorDeployService(hostB.getHost(), exec);
+        
+        hostA.injectBean(depA, DeployerSPI.class);
+        hostB.injectBean(depB, DeployerSPI.class);
+
+        BeanHandle stuff = new DirectBeanHandle(null, new Stuff());
+        hostA.injectBean(depA.wrap(stuff), CommonStuff.class);
+        hostB.injectBean(depB.wrap(stuff), CommonStuff.class);
+        
+        ExecutionClosure ec = m.bind(gen);
+        ec.execute(new PrintObserver());
+        new String();
+    }
+    
     @Test
     public void fail_on_bad_locator() {
         
@@ -144,6 +237,10 @@ public class MonadFactoryTest {
         
     }
     
+    public class Stuff implements CommonStuff {
+        
+    }
+    
     public interface MyDriver {
         
         public void init(CommonStuff stuff);
@@ -158,14 +255,17 @@ public class MonadFactoryTest {
 
         @Override
         public void init(CommonStuff stuff) {
+            System.out.println("  > init(" + stuff + ")");
         }
 
         @Override
         public void do1() {
+            System.out.println("  > do1()");
         }
 
         @Override
         public void do2() {
+            System.out.println("  > do2()");
         }
     }
     

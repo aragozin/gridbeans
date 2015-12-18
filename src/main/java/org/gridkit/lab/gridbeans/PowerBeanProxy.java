@@ -1,6 +1,7 @@
 package org.gridkit.lab.gridbeans;
 
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
@@ -176,6 +177,20 @@ public class PowerBeanProxy implements InvocationHandler {
 		}
 
 		@Override
+        public boolean canDelegate(Object bean) {
+		    if (bean == null) {
+		        return false;
+		    }
+            Method mm = tryCastMethod(bean.getClass());
+            if (mm != null && m.getReturnType().isAssignableFrom(mm.getReturnType())) {
+                return true;
+            }
+            else {
+                return false;
+            }
+        }
+
+        @Override
 		public Method getCastedMethod(Class<?> type) {
 		    if (m.getDeclaringClass() == type) {
 		        return m;
@@ -188,6 +203,22 @@ public class PowerBeanProxy implements InvocationHandler {
                 } catch (NoSuchMethodException e) {
                     throw new IllegalArgumentException("Method " + m + " cannot be rebased to " + type);
                 }
+		    }
+		}
+
+		@Override
+		public Method tryCastMethod(Class<?> type) {
+		    if (m.getDeclaringClass() == type) {
+		        return m;
+		    }
+		    else {
+		        try {
+		            return type.getMethod(m.getName(), m.getParameterTypes());
+		        } catch (SecurityException e) {
+		            throw new RuntimeException(e);
+		        } catch (NoSuchMethodException e) {
+		            return null;
+		        }
 		    }
 		}
 		
@@ -225,7 +256,33 @@ public class PowerBeanProxy implements InvocationHandler {
 			return ma;
 		}
 
-		@Override
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T invokeOn(Object bean) {
+
+		    if (bean == null) {
+                throw new NullPointerException("bean is null");
+            }
+            try {
+                Method mm = bean.getClass().getMethod(m.getName(), m.getParameterTypes());
+                if (!m.getReturnType().isAssignableFrom(mm.getReturnType())) {
+                    throw new IllegalArgumentException("Call delegation failed, return type mismatch");
+                }
+                else {
+                    mm.setAccessible(true);
+                    try {
+                        return (T)mm.invoke(bean, getArguments());
+                    } catch (InvocationTargetException e) {
+                        throwUnchecked(e.getTargetException());
+                        throw new Error("Unreachable");
+                    }
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("Call dispatch error", e);
+            }
+        }
+
+        @Override
 		public void doReturnObject(Object value) {
 			if (done) {
 				throw new IllegalStateException("return is already armed");
@@ -260,6 +317,32 @@ public class PowerBeanProxy implements InvocationHandler {
 			done = true;
 			returnProxy = handler;
 		}
+
+		@Override
+		public void doDelegate(Object bean) {
+		    if (done) {
+		        throw new IllegalStateException("return is already armed");
+		    }
+		    if (bean == null) {
+		        throw new NullPointerException("bean is null");
+		    }
+		    try {
+                Method mm = bean.getClass().getMethod(m.getName(), m.getParameterTypes());
+                if (!m.getReturnType().isAssignableFrom(mm.getReturnType())) {
+                    doThrow(new IllegalArgumentException("Call delegation failed, return type mismatch"));
+                }
+                else {
+                    mm.setAccessible(true);
+                    try {
+                        doReturnObject(mm.invoke(bean, getArguments()));
+                    } catch (InvocationTargetException e) {
+                        doThrow(e.getTargetException());
+                    }
+                }
+            } catch (Exception e) {
+                doThrow(new RuntimeException("Call dispatch error", e));
+            }
+		}
 	}
 	
 	public interface InvocationProcessor {
@@ -280,6 +363,12 @@ public class PowerBeanProxy implements InvocationHandler {
 		 * @throws IllegalArgumentException if method cannot be rebased
 		 */
 		public Method getCastedMethod(Class<?> castBase);
+
+		public Method tryCastMethod(Class<?> castBase);
+		
+		public boolean canDelegate(Object bean);
+
+		public <T> T invokeOn(Object bean) throws InvocationTargetException;
 		
 		public Class<?> getReturnType();
 
@@ -299,6 +388,8 @@ public class PowerBeanProxy implements InvocationHandler {
 		public void doReturnThis();
 		
 		public void doReturnProxy(InvocationProcessor handler);
+
+		public void doDelegate(Object target);
 				
 	}
 	
@@ -332,4 +423,13 @@ public class PowerBeanProxy implements InvocationHandler {
 		}
 		return result;
 	}	
+	
+    private static void throwUnchecked(Throwable e) {
+	    PowerBeanProxy.<RuntimeException>throwAny(e);
+	}
+	
+	@SuppressWarnings("unchecked")
+    private static <T extends Throwable> void throwAny(Throwable e) throws T {
+	    throw (T)e;
+	}
 }

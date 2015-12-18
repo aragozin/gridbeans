@@ -6,7 +6,7 @@ import java.util.Set;
 public interface RuntimeEnvironment {
 
     public ExecutionHost root();
-    
+        
     public interface BeanHandle {
 
         public ExecutionHost getHost();

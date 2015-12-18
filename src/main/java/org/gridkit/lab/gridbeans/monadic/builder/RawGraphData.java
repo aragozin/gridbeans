@@ -23,10 +23,12 @@ class RawGraphData {
         ActionGraph.Action[] dependents;
         
         StackTraceElement[] site;
+        String description;
 
-        public CheckpointInfo(int id, String name, boolean scoped, List<Action> dependencies, List<Action> dependents, StackTraceElement[] site) {
+        public CheckpointInfo(int id, String name, String description, boolean scoped, List<Action> dependencies, List<Action> dependents, StackTraceElement[] site) {
             this.id = id;
             this.name = name;
+            this.description = description;
             this.dependencies = dependencies.toArray(new ActionGraph.Action[0]);
             this.dependents = dependents.toArray(new ActionGraph.Action[0]);
             this.site = site;
@@ -34,9 +36,7 @@ class RawGraphData {
         }
 
         public String toString() {
-            return id == 0 ? "<start>" : 
-                   name == null ? "<" + id + ">" : name;
+            return description;
         }
-        
     }
 }

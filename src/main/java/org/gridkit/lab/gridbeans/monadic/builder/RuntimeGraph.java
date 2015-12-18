@@ -316,7 +316,12 @@ class RuntimeGraph {
                 checkpoints.add(cs);
                 cs.seqNo = ch.id;
                 cs.name = ch.name;
+                cs.description = ch.description;
                 cs.site = ch.site;
+                if (ch.scoped) {
+                    cs.splitStates = new HashMap<RuntimeEnvironment.ExecutionHost, RuntimeGraph.CheckpointState>();
+                }
+                
                 if (graph == null) {
                     if (ch.dependents.length > 0) {
                         graph = ch.dependents[0].getGraph();
@@ -654,20 +659,26 @@ class RuntimeGraph {
                     bh.dependents.add(a);
                 }
             }
-            for(CheckpointState cs: checkpoints) {
+            for(CheckpointState cs: new ArrayList<CheckpointState>(checkpoints)) {
                 for(Action a: cs.dependents) {
-                    a.checkpointDeps.add(cs);
+                    a.checkpointDeps.add(scopedCheckpoint(cs, a.host));
+                    if (cs.isScoped()) {
+                        scopedCheckpoint(cs, a.host).dependents.add(a);
+                    }
                 }
                 for(Action a: cs.dependencies) {
-                    a.dependents.add(cs);
+                    a.dependents.add(scopedCheckpoint(cs, a.host));
+                    if (cs.isScoped()) {
+                        scopedCheckpoint(cs, a.host).dependencies.add(a);
+                    }
                 }
             }
             
-            for(Action a: actions) {
-                System.out.println("ACTION " + a);
-                System.out.println(" -> " + a.checkpointDeps);
-                System.out.println(" -> " + a.dependents);
-            }
+//            for(Action a: actions) {
+//                System.out.println("ACTION " + a);
+//                System.out.println(" -> " + a.checkpointDeps);
+//                System.out.println(" -> " + a.dependents);
+//            }
         }
     };
     
@@ -734,16 +745,28 @@ class RuntimeGraph {
         
         int seqNo;
         String name;
+        String description;
         StackTraceElement[] site;
+        
+        Map<ExecutionHost, CheckpointState> splitStates;
+        
+        ExecutionHost host;
         
         List<Action> dependencies = new ArrayList<Action>();
         List<Action> dependents = new ArrayList<Action>();
 
         boolean passed;
         
+        public boolean isScoped() {
+            return splitStates != null;
+        }
+        
+        public ExecutionHost getHost() {
+            return host;
+        }
+        
         public String toString() {
-            return seqNo == 0 ? "<start>" : 
-                   name == null ? "<" + seqNo + ">" : name;
+            return description;
         }
     }
     
@@ -884,6 +907,28 @@ class RuntimeGraph {
         throw new RuntimeException("No such action found");
     }
     
+    
+    protected CheckpointState scopedCheckpoint(CheckpointState cs, ExecutionHost host) {
+        if (!cs.isScoped()) {
+            return cs;
+        }
+        
+        CheckpointState st = cs.splitStates.get(host);
+        if (st == null) {
+            st = new CheckpointState();
+            checkpoints.add(st);
+            st.seqNo = cs.seqNo;
+            st.name = cs.name;
+            st.description = cs.description;
+            st.host = host;
+            st.site = cs.site;
+            cs.splitStates.put(host,  st);
+        }
+        return st;
+    }
+    
+
+    
     private static class ChDescr implements CheckpointDescription {
         
         private CheckpointState ch;
@@ -896,7 +941,17 @@ class RuntimeGraph {
         public String getName() {
             return ch.toString();
         }
-        
+
+        @Override
+        public boolean isGlobal() {
+            return ch.getHost() == null;
+        }
+
+        @Override
+        public Object getExecutionHost() {
+            return ch.getHost();
+        }
+
         public String toString() {
             return ch.toString();
         }

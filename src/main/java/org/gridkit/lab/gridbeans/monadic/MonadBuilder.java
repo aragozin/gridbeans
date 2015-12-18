@@ -14,7 +14,19 @@ public interface MonadBuilder extends ExecutionTarget {
 
     public void rewind(Checkpoint label);
 
+    /**
+     * Creates anonymous scoped checkpoint and joins it.
+     * <br/>
+     * <b>scoped</b> - means that synchronization happen only within execution scope.
+     */
     public void sync();
+
+    /**
+     * Creates anonymous global checkpoint and joins it.
+     * <br/>
+     * <b>global</b> - means that all related execution host will synchronize on this checkpoint.
+     */
+    public void checkpoint();
 
     public void join(Checkpoint label);
 

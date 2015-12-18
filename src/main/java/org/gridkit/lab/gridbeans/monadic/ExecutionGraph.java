@@ -34,6 +34,10 @@ public interface ExecutionGraph {
         
         public String getName();
         
+        public boolean isGlobal();
+        
+        public Object getExecutionHost();
+        
     }
     
     public interface CallDescription {

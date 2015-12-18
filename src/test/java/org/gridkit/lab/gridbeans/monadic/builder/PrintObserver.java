@@ -18,7 +18,12 @@ public class PrintObserver implements ExecutionObserver {
 
     @Override
     public void onCheckpoint(CheckpointDescription checkpoint) {
-        System.out.println("CHECKPOINT " + checkpoint);
+        if (checkpoint.isGlobal()) {
+            System.out.println("CHECKPOINT " + checkpoint);
+        }
+        else {
+            System.out.println("SYNC [" + checkpoint.getExecutionHost() + "] " + checkpoint);
+        }
     }
 
     @Override

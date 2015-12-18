@@ -4,6 +4,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -156,7 +157,12 @@ public class MonadFactory implements MonadBuilder {
     
     @Override
     public void sync() {
-        top().join(new CheckpointImpl());        
+        top().join(new CheckpointImpl(true));        
+    }
+
+    @Override
+    public void checkpoint() {
+        top().join(new CheckpointImpl(false));        
     }
 
     private CheckpointImpl castCheckpoint(Checkpoint label) {
@@ -197,7 +203,7 @@ public class MonadFactory implements MonadBuilder {
         rgd.checkpoints = new RawGraphData.CheckpointInfo[allCheckpoints.size()];
         for(int i = 0; i != rgd.checkpoints.length; ++i) {
             CheckpointImpl ci = allCheckpoints.get(i);
-            rgd.checkpoints[i] = new RawGraphData.CheckpointInfo(ci.chckId, ci.name, ci.scoped, ci.dependencies, ci.dependents, ci.site);
+            rgd.checkpoints[i] = new RawGraphData.CheckpointInfo(ci.chckId, ci.name, ci.toString(), ci.scoped, ci.dependencies, ci.dependents, ci.site);
         }
         rgd.omniLocator = tracker.proxy2bean(omni);
         rgd.rootLocator = tracker.proxy2bean(root);
@@ -278,6 +284,14 @@ public class MonadFactory implements MonadBuilder {
                 else {
                     return false;
                 }
+            } catch (InvocationTargetException e) {
+                if (e.getTargetException() instanceof RuntimeException) {
+                    throw (RuntimeException)e.getTargetException();
+                }
+                else {
+                    throw new RuntimeException(e.getTargetException());
+                }
+            
             } catch (Exception e) {
                 throw new RuntimeException("Error processing annotations on " + a, e);
             }
@@ -359,7 +373,7 @@ public class MonadFactory implements MonadBuilder {
         protected void addParam(Action a, List<Class<?>> matchedSignature, List<Object> matchedParams, Class<?>[] p, int i) {
             matchedSignature.add(p[i]);
             if (a.getBeanParams()[i] != null) {
-                matchedParams.add(a.getBeanParams()[i]);
+                matchedParams.add(bean2proxy(a.getBeanParams()[i]));
             }
             else {
                 matchedParams.add(a.getGroundParams()[i]);
@@ -622,19 +636,56 @@ public class MonadFactory implements MonadBuilder {
         List<ActionGraph.Action> dependents = new ArrayList<ActionGraph.Action>();
         
 
-        public CheckpointImpl() {
+        public CheckpointImpl(boolean scoped) {
             // TODO trim
-            this.site = Thread.currentThread().getStackTrace();
-            scoped = true;
+            this.site = trimStakcTrace(Thread.currentThread().getStackTrace());
+            this.scoped = scoped;
         }
 
         public CheckpointImpl(String name) {
+            this.site = trimStakcTrace(Thread.currentThread().getStackTrace());
             this.name = name;
         }
 
         public String toString() {
             return chckId == 0 ? "<start>" : 
-                   name == null ? "<" + chckId + ">" : name;
+                   name == null ? "< #" + chckId + callSite() + " >" : name;
+        }
+        
+        private String callSite() {
+            if (site != null && site.length > 0) {
+                String cn = site[0].getClassName();
+                if (cn.lastIndexOf('.') > 0) {
+                    cn = cn.substring(cn.lastIndexOf('.') + 1, cn.length());
+                }
+                String st = " @ " + cn + "." + site[0].getMethodName();
+                if (site[0].getFileName() != null) {
+                    st += "(" + site[0].getFileName();
+                    if (site[0].getLineNumber() >= 0) {
+                        st += ":" + site[0].getLineNumber();
+                    }
+                    st += ")";
+                }
+                return st;
+            }
+            else {
+                return "";
+            }
+        }
+
+        private StackTraceElement[] trimStakcTrace(StackTraceElement[] stackTrace) {
+            int n = 1;
+            for(; n <= stackTrace.length; ++n) {
+                String cn = stackTrace[n].getClassName();
+                if (cn.equals(MonadFactory.class.getName())
+                    ||cn.startsWith(MonadFactory.class.getName() + "$")) {
+                    continue;
+                }
+                else {
+                    break;
+                }
+            }
+            return Arrays.copyOfRange(stackTrace, n, stackTrace.length);
         }
     }
     
