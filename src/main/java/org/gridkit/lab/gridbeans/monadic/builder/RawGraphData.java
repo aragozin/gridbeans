@@ -19,6 +19,7 @@ class RawGraphData {
         String name;
         boolean scoped;
         
+        CheckpointInfo checkpointDependency;
         ActionGraph.Action[] dependencies;
         ActionGraph.Action[] dependents;
         

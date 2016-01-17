@@ -224,6 +224,9 @@ class RuntimeGraph {
     protected void completed(CheckpointState cs) {
         cs.passed = true;
         observer.onCheckpoint(new ChDescr(cs));
+        for(CheckpointState c: cs.cpDependents) {
+            reviewCheckpoint(c);
+        }
         for(Action a: cs.dependents) {
             reviewAction(a);
         }        
@@ -265,7 +268,7 @@ class RuntimeGraph {
     
     private void prepareDeps(Action a) {
         for(BeanHolder b: a.beanDeps) {
-            if (b.lookupId != null) {
+            if (b.producerAction == null) {
                 if (!b.requested) {
                     doExport(b);
                 }
@@ -304,8 +307,17 @@ class RuntimeGraph {
                     action.completed = true;
                     
                     action.outputBean.handle = out;
-                    completed(action);          
+                    completed(action);                    
                     available(action.outputBean);
+
+                    // propagate handle
+                    for(BeanHolder bh: beans) {
+                        if (bh.producerAction == action) {
+                            bh.handle = out;
+                            bh.requested = true;
+                            available(bh);
+                        }
+                    }
                 }
             });
         }
@@ -360,6 +372,9 @@ class RuntimeGraph {
     }
 
     private boolean isExecutionReady(CheckpointState cs) {
+        if (cs.cpDependency != null && !cs.cpDependency.passed) {
+            return false;
+        }
         for(Action a: cs.dependencies) {
             if (!a.completed) {
                 return false;
@@ -456,11 +471,20 @@ class RuntimeGraph {
         protected void initCheckpoints() {
             for(CheckpointInfo ch: sourceGraph) {
                 CheckpointState cs = new CheckpointState();
+                CheckpointState dep = null;
+                if (ch.checkpointDependency != null) {
+                    for(CheckpointState dcs: checkpoints) {
+                        if (dcs.seqNo == ch.checkpointDependency.id) {
+                            dep = dcs;
+                        }
+                    }
+                }
                 checkpoints.add(cs);
                 cs.seqNo = ch.id;
                 cs.name = ch.name;
                 cs.description = ch.description;
                 cs.site = ch.site;
+                cs.cpDependency = dep;
                 if (ch.scoped) {
                     cs.splitStates = new HashMap<RuntimeEnvironment.ExecutionHost, RuntimeGraph.CheckpointState>();
                 }
@@ -735,9 +759,6 @@ class RuntimeGraph {
             else {
                 ActionGraph.Action sa = ((ActionGraph.LocalBean)b).getOrigin();
                 ProtoAction spa = protoActions.get(sa);
-                if (spa == null) {
-                    new String();
-                }
                 if (spa.locators.contains(omniLocator)) {
                     if (spa.locators.addAll(pa.locators)) {
                         ++changeCounter;
@@ -852,7 +873,7 @@ class RuntimeGraph {
                         BeanHolder oh = createProducedBeanHolder(host, in.beanType, a);
                         a.outputBean = oh;
                         for(ExportRef er: exports) {
-                            if (er.exportAction == pa) {
+                            if (er.protoAction == pa) {
                                 ExportTarget et = new ExportTarget(host, er.identity);
                                 if (exportMap.containsKey(et)) {
                                     throw new RuntimeException("Ambiguos bean publish " + er.identity + " at " + host, pa.action.getSite().getStackTraceAsExcpetion());
@@ -973,12 +994,18 @@ class RuntimeGraph {
                     }
                 }
             }
+
+            for(CheckpointState cs: new ArrayList<CheckpointState>(checkpoints)) {
+                if (cs.cpDependency != null) {
+                    cs.cpDependency.cpDependents.add(cs);
+                }
+            }
             
-//            for(Action a: actions) {
-//                System.out.println("ACTION " + a);
-//                System.out.println(" -> " + a.checkpointDeps);
-//                System.out.println(" -> " + a.dependents);
-//            }
+            for(Action a: actions) {
+                System.out.println("ACTION " + a);
+                System.out.println(" -> " + a.checkpointDeps);
+                System.out.println(" -> " + a.dependents);
+            }
         }
     };
     
@@ -1038,7 +1065,12 @@ class RuntimeGraph {
         List<CheckpointState> dependents = new ArrayList<CheckpointState>();
         
         public String toString() {
-            return hostBean + "." + method.getName() + "()";
+            if (hostBean == null) {
+                return method.getName() + "(" + beanParams[0] + ", " + Arrays.toString((Object[])groundParams[1]) + ")";
+            }
+            else {
+                return hostBean + "." + method.getName() + "()";
+            }
         }
 
         public Invocation toInvocation() {
@@ -1069,8 +1101,10 @@ class RuntimeGraph {
         
         ExecutionHost host;
         
+        CheckpointState cpDependency;
         List<Action> dependencies = new ArrayList<Action>();
         List<Action> dependents = new ArrayList<Action>();
+        List<CheckpointState> cpDependents = new ArrayList<CheckpointState>();
 
         boolean passed;
         
@@ -1095,7 +1129,7 @@ class RuntimeGraph {
         RuntimeEnvironment.ExecutionHost host;
         
         // bean can be either
-        // produced by action
+        // produced by action (may be published)
         Action producerAction;
         // or injected by environment
         BeanIdentity lookupId;
@@ -1240,6 +1274,16 @@ class RuntimeGraph {
             st.host = host;
             st.site = cs.site;
             cs.splitStates.put(host,  st);
+            if (cs.cpDependency != null) {
+                CheckpointState dep;
+                if (cs.cpDependency.isScoped()) {
+                    dep = scopedCheckpoint(cs.cpDependency, host);
+                }
+                else {
+                    dep = cs.cpDependency;
+                }
+                st.cpDependency = dep;
+            }
         }
         return st;
     }
@@ -1283,6 +1327,11 @@ class RuntimeGraph {
             } else if (!target.equals(other.target))
                 return false;
             return true;
+        }
+        
+        @Override
+        public String toString() {
+            return id + "@" + target;
         }
     }
     

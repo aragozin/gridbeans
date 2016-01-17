@@ -34,7 +34,7 @@ public class MonadFactoryTest {
         MyDriver mdB = cloud.at("B").deploy(MyDriver.class, new MyBean());
         
         // Exporting common stuff 2
-        bld.publish(bld.deploy(CommonStuff.class , new Stuff()), 2);
+        bld.publish(bld.deploy(CommonStuff.class , new Stuff("2")), 2);
         
         
         mdA.do1();
@@ -85,49 +85,54 @@ public class MonadFactoryTest {
     @Test
     public void smoke_on_executor_target() {
         
-        MonadBuilder mb = MonadFactory.build();
+        MonadBuilder bld = MonadFactory.build();
         
-        Cloud cloud = mb.locator(Cloud.class);
-        MyDriver md = cloud.at("A").deploy(MyDriver.class, new MyBean());
-        MyDriver md2 = cloud.at("B").deploy(MyDriver.class, new MyBean());
+        Cloud cloud = bld.locator(Cloud.class);
+        MyDriver mdA = cloud.at("A").deploy(MyDriver.class, new MyBean());
+        MyDriver mdB = cloud.at("B").deploy(MyDriver.class, new MyBean());
+
+        // Exporting common stuff 2
+        bld.publish(bld.deploy(CommonStuff.class , new Stuff("2")), 2);
         
-        md.do1();
-        mb.join(mb.checkpoint("cp1"));
-        md.do2();
-        mb.join(mb.checkpoint("cp2"));
+        mdA.do1();
+        bld.join(bld.checkpoint("cp1"));
+        mdA.do2();
+        bld.join(bld.checkpoint("cp2"));
 
-        mb.rewind(mb.checkpoint("cp1"));
-        md.do1();
-        mb.sync();
-        md.do2();
-        mb.join(mb.checkpoint("cp2"));
+        bld.rewind(bld.checkpoint("cp1"));
+        mdA.do1();
+        bld.sync();
+        mdA.do2();
+        bld.join(bld.checkpoint("cp2"));
 
-        mb.rewind(mb.checkpoint("cp1"));
-        md2.do1();
-        mb.sync();
-        md2.do2();
-        mb.join(mb.checkpoint("cp2"));
+        bld.rewind(bld.checkpoint("cp1"));
+        mdB.do1();
+        bld.sync();
+        mdB.do3();
+        // reference published bean
+        cloud.at("A").deploy(MyDriver.class, new MyBean()).init(bld.bean(CommonStuff.class, 2));
+        bld.join(bld.checkpoint("cp2"));
 
-        mb.rewind(mb.checkpoint("cp1"));
-        md.do1();
-        md2.do1();
-        mb.checkpoint();
-        md.do2();
-        md2.do2();
-        mb.join(mb.checkpoint("cp2"));
+        bld.rewind(bld.checkpoint("cp1"));
+        mdA.do1();
+        mdB.do1();
+        bld.checkpoint();
+        mdA.do2();
+        mdB.do2();
+        bld.join(bld.checkpoint("cp2"));
 
-        mb.rewind(mb.checkpoint("cp1"));
-        mb.wallclock().delay(1, TimeUnit.SECONDS);
-        mb.join(mb.checkpoint("cp2"));
+        bld.rewind(bld.checkpoint("cp1"));
+        bld.wallclock().delay(1, TimeUnit.SECONDS);
+        bld.join(bld.checkpoint("cp2"));
         
-        mb.rewind();
+        bld.rewind();
 
-        CommonStuff cs = mb.bean(CommonStuff.class);
-        md.init(cs);
-        md2.init(cs);
-        mb.join(mb.checkpoint("cp1"));
+        CommonStuff cs = bld.bean(CommonStuff.class);
+        mdA.init(cs);
+        mdB.init(cs);
+        bld.join(bld.checkpoint("cp1"));
         
-        ScenarioDefinition m = mb.finish();
+        ScenarioDefinition m = bld.finish();
         
         Executor exec = Executors.newSingleThreadExecutor();
         
@@ -147,7 +152,7 @@ public class MonadFactoryTest {
         hostA.injectBean(depA, DeployerSPI.class);
         hostB.injectBean(depB, DeployerSPI.class);
 
-        BeanHandle stuff = new DirectBeanHandle(null, new Stuff());
+        BeanHandle stuff = new DirectBeanHandle(null, new Stuff("A"));
         hostA.injectBean(depA.wrap(stuff), CommonStuff.class);
         hostB.injectBean(depB.wrap(stuff), CommonStuff.class);
         
@@ -276,7 +281,17 @@ public class MonadFactoryTest {
     }
     
     public class Stuff implements CommonStuff {
+     
+        private String id;
+
+        public Stuff(String id) {
+            this.id = id;
+        }
         
+        @Override
+        public String toString() {
+            return "Stuff-" + id;
+        }
     }
     
     public interface MyDriver {
@@ -286,6 +301,8 @@ public class MonadFactoryTest {
         public void do1();
 
         public void do2();
+
+        public void do3();
         
     }
     
@@ -293,17 +310,22 @@ public class MonadFactoryTest {
 
         @Override
         public void init(CommonStuff stuff) {
-            System.out.println("  > init(" + stuff + ")");
+            System.out.println("  [" + Thread.currentThread().getName() + "] init(" + stuff + ")");
         }
 
         @Override
         public void do1() {
-            System.out.println("  > do1()");
+            System.out.println("  [" + Thread.currentThread().getName() + "] do1()");
         }
 
         @Override
         public void do2() {
-            System.out.println("  > do2()");
+            System.out.println("  [" + Thread.currentThread().getName() + "] do2()");
+        }
+
+        @Override
+        public void do3() {
+            System.out.println("  [" + Thread.currentThread().getName() + "] do3()");
         }
     }
     

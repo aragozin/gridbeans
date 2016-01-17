@@ -220,6 +220,10 @@ public class MonadFactory implements MonadBuilder {
         for(int i = 0; i != rgd.checkpoints.length; ++i) {
             CheckpointImpl ci = allCheckpoints.get(i);
             rgd.checkpoints[i] = new RawGraphData.CheckpointInfo(ci.chckId, ci.name, ci.toString(), ci.scoped, ci.dependencies, ci.dependents, ci.site);
+            if (ci.checkpointDep != ci) {
+                CheckpointImpl dci = ci.checkpointDep;
+                rgd.checkpoints[i].checkpointDependency = new RawGraphData.CheckpointInfo(dci.chckId, dci.name, dci.toString(), dci.scoped, dci.dependencies, dci.dependents, dci.site);
+            }
         }
         rgd.omniLocator = tracker.proxy2bean(omni);
         rgd.rootLocator = tracker.proxy2bean(root);
@@ -680,6 +684,7 @@ public class MonadFactory implements MonadBuilder {
         boolean scoped = false;
         StackTraceElement[] site;
         
+        CheckpointImpl checkpointDep = this;
         List<ActionGraph.Action> dependencies = new ArrayList<ActionGraph.Action>();
         List<ActionGraph.Action> dependents = new ArrayList<ActionGraph.Action>();
         
@@ -752,6 +757,9 @@ public class MonadFactory implements MonadBuilder {
         }
         
         public void join(CheckpointImpl impl) {
+            if (impl.scoped == true && start != null) {
+                impl.checkpointDep = start.checkpointDep;
+            }
             impl.dependencies.addAll(openActions);
             start = impl;
         }
