@@ -1,49 +1,89 @@
 package org.gridkit.lab.gridbeans.monadic;
 
-import org.gridkit.lab.gridbeans.ActionGraph;
+import java.lang.reflect.Method;
+import java.util.Collection;
+import java.util.Set;
 
-/**
- * Encapsulated definition of complex execution graph.
- * 
- * @author Alexey Ragozin (alexey.ragozin@gmail.com)
- */
+import org.gridkit.lab.gridbeans.ActionGraph;
+import org.gridkit.lab.gridbeans.monadic.RuntimeTopology.TopologyNode;
+
 public interface ExecutionGraph {
 
-    public ExecutionClosure bind(RuntimeEnvironment environment);
+    public Start start();
+    
+    public Collection<Step> allSteps();
 
-    public interface ExecutionClosure {
+    public interface ScriptElement {
+
+        /**
+         * {@link Checkpoint} may have <code>null</code> host if it is global.
+         */
+        public TopologyNode host();
+    }
+
+    public interface Step extends ScriptElement {
+
+        public Set<Step> dependencies();
+
+        public Set<Step> dependents();
         
-        public void execute(ExecutionObserver observer);
+        public ActionGraph.ActionSite callSite();
+    }
+
+    public interface Start extends Step {
+
+    }
+
+    public interface PublishStep extends Step {
         
+        public Bean bean();
+        
+        public Object[] lookupId();
+
+        public ProducedBean outcome();
     }
     
-    public interface ExecutionObserver {
-        
-        public void onFire(CallDescription call);
+    public interface CallStep extends Step {
 
-        public void onComplete(CallDescription call);
-        
-        public void onCheckpoint(CheckpointDescription checkpoint);
+        public Bean hostBean();
 
-        public void onFailure(Exception error);
-        
-        public void onFinish();
+        public Method method();
+
+        public Object[] params();
+
+        public ProducedBean outcome();
     }
-    
-    public interface CheckpointDescription {
-        
-        public String getName();
-        
-        public boolean isGlobal();
-        
-        public Object getExecutionHost();
-        
+
+    public interface Checkpoint extends Step {
+
+        public String label();
+
+        public ActionGraph.ActionSite callSite();
     }
-    
+
+    public interface Bean extends ScriptElement {
+
+        public Class<?> beanType();
+
+    }
+
+    public interface ProducedBean extends Bean {
+
+        public Step producer();
+
+    }
+
+    public interface InjectedBean extends Bean {
+
+        public Object[] lookupId();
+
+        public ActionGraph.ActionSite callSite();
+    }
+
     public interface CallDescription {
-        
+
         public int getCallId();
-        
+
         public Object getExecutionHost();
 
         public Object getBeanReference();
@@ -53,10 +93,23 @@ public interface ExecutionGraph {
         public String[] getParamDescription();
 
         public boolean hasOutput();
-        
+
         public String getResultDescription();
 
         public Throwable getException();
-        
+
+    }
+    
+    public interface ExecutionObserver {
+
+        public void onFire(CallDescription call);
+
+        public void onComplete(CallDescription call);
+
+        public void onCheckpoint(Checkpoint checkpoint);
+
+        public void onFailure(Exception error);
+
+        public void onFinish();
     }
 }

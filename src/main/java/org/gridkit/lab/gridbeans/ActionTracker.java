@@ -771,7 +771,14 @@ public class ActionTracker {
 			return trace;
 		}
 		
-		public String toString() {
+		@Override
+        public RuntimeException getStackTraceAsExcpetion() {
+            RuntimeException e = new RuntimeException("Call site");
+            e.setStackTrace(trace);
+            return e;
+        }
+
+        public String toString() {
 			return PrintHelper.toString(this);
 		}
 	}
@@ -989,7 +996,7 @@ public class ActionTracker {
 		return result;
 	}
 
-	private interface TrackedBean extends ProtoProxy {
+	protected interface TrackedBean extends ProtoProxy {
 		
 		public ActionTracker getHost();
 		

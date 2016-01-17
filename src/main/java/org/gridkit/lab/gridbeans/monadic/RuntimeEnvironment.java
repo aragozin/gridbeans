@@ -3,9 +3,11 @@ package org.gridkit.lab.gridbeans.monadic;
 import java.lang.reflect.Method;
 import java.util.Set;
 
-public interface RuntimeEnvironment {
+public interface RuntimeEnvironment extends RuntimeTopology {
 
     public ExecutionHost root();
+    
+    public ExecutionHost lookupHost(TopologyNode node);
         
     public interface BeanHandle {
 
@@ -15,7 +17,7 @@ public interface RuntimeEnvironment {
         
     }
     
-    public interface ExecutionHost {
+    public interface ExecutionHost extends TopologyNode {
 
         public Set<ExecutionHost> resolveLocator(Method method, Object[] params);
 

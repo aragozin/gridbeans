@@ -17,14 +17,26 @@ import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment;
 public class GenericEnvironment implements RuntimeEnvironment {
 
     private HostEntity root = new HostEntity("{root}");
+    private BeanFactoryBuilder globalBeans = new BeanFactoryBuilder();
     
     @Override
     public ExecutionHost root() {
         return root.getHost();
     }
 
+    @Override
+    public ExecutionHost lookupHost(TopologyNode node) {
+        return ((ExecutionHost)node);
+    }
+
+
+
     public HostBuilder rootBuilder() {
         return root;
+    }
+    
+    public BeanFactoryBuilder globalBeanBuilder() {
+        return globalBeans;
     }
     
     public HostBuilder createHost(String displayName) {
@@ -58,8 +70,16 @@ public class GenericEnvironment implements RuntimeEnvironment {
          * <br/>
          * <code>false</code> - result means that factory will not handle this bean
          */
-        public boolean lookup(Class<?> type, Object[] id, InvocationCallback callback); 
+        public boolean lookup(ExecutionHost host, Class<?> type, Object[] id, InvocationCallback callback); 
         
+        /**
+         * Verify bean presence.
+         * <p>
+         * <code>true</code> - result means bean will be produced by factory
+         * <br/>
+         * <code>false</code> - result means that factory will not handle this bean
+         */
+        public boolean checkBean(Class<?> type, Object[] id);
     }    
 
     public interface LocationResolver {
@@ -70,7 +90,7 @@ public class GenericEnvironment implements RuntimeEnvironment {
 
     public interface BeanProducer {
         
-        public void produce(InvocationCallback callback); 
+        public void produce(ExecutionHost host, InvocationCallback callback); 
         
     }   
     
@@ -78,7 +98,16 @@ public class GenericEnvironment implements RuntimeEnvironment {
         
         private String displayName;
         private ExecHost host = new ExecHost();
-        private BeanFactoryBuilder factoryBuilder = new BeanFactoryBuilder();
+        private BeanFactoryBuilder factoryBuilder = new BeanFactoryBuilder() {
+
+            @Override
+            protected List<BeanFactory> getDelegates() {
+                List<BeanFactory> d = new ArrayList<GenericEnvironment.BeanFactory>(super.getDelegates());
+                d.add(globalBeans);
+                return d;
+            }
+            
+        };
         private LocationBuilder locationBuilder = new LocationBuilder();
         
         public HostEntity(String displayName) {
@@ -128,8 +157,13 @@ public class GenericEnvironment implements RuntimeEnvironment {
             }
 
             @Override
+            public boolean checkBean(Class<?> type, Object[] identity) {
+                return factoryBuilder.checkBean(type, identity);                
+            }
+
+            @Override
             public void resolveBean(Class<?> type, Object[] identity, InvocationCallback callback) {
-                factoryBuilder.lookup(type, identity, callback);                
+                factoryBuilder.lookup(this, type, identity, callback);                
             }
             
             @Override
@@ -144,11 +178,24 @@ public class GenericEnvironment implements RuntimeEnvironment {
         private Map<BeanIdentity, BeanProducer> beans = new HashMap<GenericEnvironment.BeanIdentity, GenericEnvironment.BeanProducer>();
 
         @Override
-        public boolean lookup(Class<?> type, Object[] id, InvocationCallback callback) {
+        public boolean lookup(ExecutionHost host, Class<?> type, Object[] id, InvocationCallback callback) {
             BeanIdentity bi = new BeanIdentity(type, id);
             BeanProducer p = beans.get(bi);
             if (p != null) {
-                p.produce(callback);
+                p.produce(host, callback);
+                return true;
+            }
+            else {
+                return false;
+            }
+        }
+
+        
+        @Override
+        public boolean checkBean(Class<?> type, Object[] id) {
+            BeanIdentity bi = new BeanIdentity(type, id);
+            BeanProducer p = beans.get(bi);
+            if (p != null) {
                 return true;
             }
             else {
@@ -172,7 +219,10 @@ public class GenericEnvironment implements RuntimeEnvironment {
         }
 
         @Override
-        public void produce(InvocationCallback callback) {
+        public void produce(ExecutionHost host, InvocationCallback callback) {
+            if (handle.getHost() != host) {
+                throw new IllegalArgumentException("Handle belongs to wrong host");
+            }
             callback.done(handle);
         }
     }
@@ -191,9 +241,9 @@ public class GenericEnvironment implements RuntimeEnvironment {
         }
 
         @Override
-        public boolean lookup(Class<?> type, Object[] id, InvocationCallback callback) {
-            for(BeanFactory f: delegates) {
-                if (f.lookup(type, id, callback)) {
+        public boolean lookup(ExecutionHost host, Class<?> type, Object[] id, InvocationCallback callback) {
+            for(BeanFactory f: getDelegates()) {
+                if (f.lookup(host, type, id, callback)) {
                     return true;
                 }
             }
@@ -201,6 +251,20 @@ public class GenericEnvironment implements RuntimeEnvironment {
             return true;
         }
 
+        @Override
+        public boolean checkBean(Class<?> type, Object[] id) {
+            for(BeanFactory f: getDelegates()) {
+                if (f.checkBean(type, id)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        protected List<BeanFactory> getDelegates() {
+            return delegates;
+        }
+        
         @Override
         public void injectBean(BeanProducer bprod, Class<?> type, Object... id) {
             mappedBeans.put(type, id, bprod);            
@@ -213,7 +277,7 @@ public class GenericEnvironment implements RuntimeEnvironment {
 
         @Override
         public void injectFactory(BeanFactory factory) {
-            delegates.add(factory);            
+            getDelegates().add(factory);            
         }
 
         @Override

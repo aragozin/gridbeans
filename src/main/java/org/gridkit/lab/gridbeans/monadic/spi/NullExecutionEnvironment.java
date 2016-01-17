@@ -9,8 +9,8 @@ import java.util.Set;
 
 import org.gridkit.lab.gridbeans.PowerBeanProxy;
 import org.gridkit.lab.gridbeans.PowerBeanProxy.InvocationProcessor;
-import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment;
 import org.gridkit.lab.gridbeans.monadic.Locator;
+import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment;
 
 public class NullExecutionEnvironment implements RuntimeEnvironment {
 
@@ -39,6 +39,13 @@ public class NullExecutionEnvironment implements RuntimeEnvironment {
         return root;
     }
     
+    @Override
+    public ExecutionHost lookupHost(TopologyNode node) {
+        return (ExecutionHost) node;
+    }
+
+
+
     public interface NullExecutionHost extends ExecutionHost {
         
         public <T extends Locator> T createHost(Class<T> locatorType);
@@ -94,6 +101,11 @@ public class NullExecutionEnvironment implements RuntimeEnvironment {
             callback.done(new VoidBeanHandle());
         }
         
+        @Override
+        public boolean checkBean(Class<?> type, Object[] identity) {
+            return true;
+        }
+
         @Override
         public <T extends Locator> T createHost(Class<T> locatorType) {
             return nullDelegate.createHost(locatorType);

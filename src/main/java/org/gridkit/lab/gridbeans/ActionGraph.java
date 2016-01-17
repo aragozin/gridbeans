@@ -95,7 +95,9 @@ public interface ActionGraph {
 		 */
 		public Set<Method> allMethodAliases();
 		
-		public StackTraceElement[] getStackTrace();		
+		public StackTraceElement[] getStackTrace();
+		
+		public RuntimeException getStackTraceAsExcpetion();
 	}
 	
 	public static interface ExternalBean extends Bean {

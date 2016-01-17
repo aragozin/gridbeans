@@ -22,7 +22,7 @@ import org.gridkit.lab.gridbeans.monadic.BeanShortcut;
 import org.gridkit.lab.gridbeans.monadic.BeanShortcut.BeanId;
 import org.gridkit.lab.gridbeans.monadic.Checkpoint;
 import org.gridkit.lab.gridbeans.monadic.DeployerSPI;
-import org.gridkit.lab.gridbeans.monadic.ExecutionGraph;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.ExecutionObserver;
 import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
 import org.gridkit.lab.gridbeans.monadic.Joinable;
 import org.gridkit.lab.gridbeans.monadic.Locator;
@@ -30,6 +30,7 @@ import org.gridkit.lab.gridbeans.monadic.LocatorShortcut;
 import org.gridkit.lab.gridbeans.monadic.LocatorShortcut.LocationId;
 import org.gridkit.lab.gridbeans.monadic.MonadBuilder;
 import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment;
+import org.gridkit.lab.gridbeans.monadic.ScenarioDefinition;
 import org.gridkit.lab.gridbeans.monadic.Wallclock;
 
 public class MonadFactory implements MonadBuilder {
@@ -56,10 +57,21 @@ public class MonadFactory implements MonadBuilder {
         }
     }
 
+    private static Set<Method> IMPORT_CALL = new HashSet<Method>();
+    static {
+        try {
+            IMPORT_CALL.add(ExecutionTarget.class.getMethod("bean", Class.class, Object[].class));
+        } catch (SecurityException e) {
+            throw new RuntimeException(e);
+        } catch (NoSuchMethodException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private static Set<Method> EXPORT_CALL = new HashSet<Method>();
     static {
         try {
-            EXPORT_CALL.add(ExecutionTarget.class.getMethod("bean", Class.class, Object[].class));
+            EXPORT_CALL.add(ExecutionTarget.class.getMethod("publish", Object.class, Object[].class));
         } catch (SecurityException e) {
             throw new RuntimeException(e);
         } catch (NoSuchMethodException e) {
@@ -106,7 +118,11 @@ public class MonadFactory implements MonadBuilder {
     public <T> T bean(Class<T> type, Object... lookupKeys) {
         return omni.bean(type, lookupKeys);
     }
-
+    
+    @Override
+    public void publish(Object bean, Object... lookupKeys) {
+        omni.publish(bean, lookupKeys);
+    }
     
     @Override
     public <T, B extends T> T deploy(Class<T> intf, B bean) {
@@ -197,7 +213,7 @@ public class MonadFactory implements MonadBuilder {
     }
 
     @Override
-    public ExecutionGraph finish() {
+    public ScenarioDefinition finish() {
         
         RawGraphData rgd = new RawGraphData();
         rgd.checkpoints = new RawGraphData.CheckpointInfo[allCheckpoints.size()];
@@ -256,8 +272,13 @@ public class MonadFactory implements MonadBuilder {
                 validateLocatorCall(a);
                 return;
             }
+            else if (isImportCall(a)) {
+                validateImportCall(a);
+            }
             else if (isExportCall(a)) {
                 validateExportCall(a);
+                // threat as action
+                top().addAction(a);
             }
             else {
                 if (isDeployCall(a)) {
@@ -445,8 +466,8 @@ public class MonadFactory implements MonadBuilder {
             }
         }
 
-        private boolean isExportCall(Action a) {
-            for(Method m: EXPORT_CALL) {
+        private boolean isImportCall(Action a) {
+            for(Method m: IMPORT_CALL) {
                 if (a.getSite().allMethodAliases().contains(m)) {
                     return true;
                 }
@@ -454,8 +475,8 @@ public class MonadFactory implements MonadBuilder {
             return false;
         }
 
-        private void validateExportCall(Action a) {
-            // Export call is special case
+        private void validateImportCall(Action a) {
+            // Import call is special case
             // Extra validation applies          
             
             Bean result = a.getResultBean();
@@ -478,6 +499,33 @@ public class MonadFactory implements MonadBuilder {
             }
         }
 
+        private boolean isExportCall(Action a) {
+            for(Method m: EXPORT_CALL) {
+                if (a.getSite().allMethodAliases().contains(m)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void validateExportCall(Action a) {
+            // Export call is special case
+            // Extra validation applies          
+            
+            Object bean = a.getBeanParams()[0];
+            if (bean == null) {
+                throw new IllegalArgumentException("First argument should be bean created by this builder");
+            }
+            Object[] varArg = (Object[]) a.getGroundParams()[1];
+            if (varArg != null) {
+                for(Object o: varArg) {
+                    if (PowerBeanProxy.getHandler(o) != null) {
+                        throw new IllegalArgumentException("Beans cannot be used as lookup keys");
+                    }
+                }
+            }
+        }
+        
         private boolean isDeployCall(Action a) {
             for(Method m: DEPLOY_CALL) {
                 if (a.getSite().allMethodAliases().contains(m)) {
@@ -715,7 +763,7 @@ public class MonadFactory implements MonadBuilder {
         
     }
     
-    private static class MonadGraph implements ExecutionGraph {
+    private static class MonadGraph implements ScenarioDefinition {
         
         private RawGraphData graphData;
         

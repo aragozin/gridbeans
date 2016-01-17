@@ -18,23 +18,40 @@ import org.gridkit.lab.gridbeans.ActionGraph.ActionSite;
 import org.gridkit.lab.gridbeans.ActionGraph.Bean;
 import org.gridkit.lab.gridbeans.ActionGraph.LocalBean;
 import org.gridkit.lab.gridbeans.monadic.Checkpoint;
-import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph;
 import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.CallDescription;
-import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.CheckpointDescription;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.CallStep;
 import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.ExecutionObserver;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.InjectedBean;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.PublishStep;
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.Step;
+import org.gridkit.lab.gridbeans.monadic.ExecutionTarget;
 import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment;
 import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment.BeanHandle;
 import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment.ExecutionHost;
 import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment.Invocation;
 import org.gridkit.lab.gridbeans.monadic.RuntimeEnvironment.InvocationCallback;
+import org.gridkit.lab.gridbeans.monadic.RuntimeTopology.TopologyNode;
 import org.gridkit.lab.gridbeans.monadic.builder.RawGraphData.CheckpointInfo;
+import org.gridkit.lab.gridbeans.monadic.spi.SimpleExecutionGraph;
 
 class RuntimeGraph {
+
+    private static final Method IMPORT_METHOD;
+    static {
+        try {
+            IMPORT_METHOD = ExecutionTarget.class.getMethod("bean", Class.class, Object[].class);
+        } catch (SecurityException e) {
+            throw new RuntimeException(e);
+        } catch (NoSuchMethodException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     private static final Method EXPORT_METHOD;
     static {
         try {
-            EXPORT_METHOD = ExecutionTarget.class.getMethod("bean", Class.class, Object[].class);
+            EXPORT_METHOD = ExecutionTarget.class.getMethod("publish", Object.class, Object[].class);
         } catch (SecurityException e) {
             throw new RuntimeException(e);
         } catch (NoSuchMethodException e) {
@@ -58,6 +75,88 @@ class RuntimeGraph {
         new GraphProcessor(graph).process();
     }
 
+    public ExecutionGraph exportGraph() {
+
+        Map<BeanHolder, ExecutionGraph.Bean> bmap = new HashMap<RuntimeGraph.BeanHolder, ExecutionGraph.Bean>();
+        Map<Action, Step> amap = new HashMap<Action, Step>();
+//        Map<CheckpointState, ExecutionGraph.Checkpoint> cmap = new HashMap<CheckpointState, ExecutionGraph.Checkpoint>();
+        
+        SimpleExecutionGraph seg = new SimpleExecutionGraph();
+
+        for(BeanHolder bean: beans) {
+            if (bean.producerAction == null) {
+                InjectedBean b = seg.inject(bean.host, bean.beanType, bean.lookupId.lookupId, null);
+                bmap.put(bean, b);
+            }
+        }
+        
+        while(amap.size() < actions.size()) {
+            nextAction:
+            for(Action a: actions) {
+                if (!amap.containsKey(a)) {
+                    if (isExportAction(a)) {
+                        BeanHolder bh = a.beanParams[0];
+                        Object[] id = (Object[]) a.groundParams[1];
+                        ExecutionGraph.Bean eb = bmap.get(bh);
+                        if (eb == null) {
+                            continue nextAction;
+                        }
+                        
+                        PublishStep ps = seg.publish(eb, id, a.source.getSite());
+                        amap.put(a, ps);
+                        ExecutionGraph.Bean outcome = seg.produce(ps);
+                        bmap.put(a.outputBean, outcome);
+                    }
+                    else {
+                        BeanHolder bh = a.hostBean;
+                        ExecutionGraph.Bean eb = bmap.get(bh);
+                        if (eb == null) {
+                            continue nextAction;
+                        }
+                        Object[] params = new Object[a.beanParams.length];
+                        for(int i = 0; i != params.length; ++i) {
+                            if (a.beanParams[i] != null) {
+                                ExecutionGraph.Bean bp = bmap.get(a.beanParams[i]);
+                                if (bp == null) {
+                                    continue nextAction;
+                                }
+                                else {
+                                    params[i] = bp;
+                                }
+                            }
+                            else {
+                                params[i] = a.groundParams[i];
+                            }
+                        }
+                    
+                        CallStep cs = seg.call(eb, a.method, params, a.source.getSite());
+                        amap.put(a, cs);
+                        if (a.outputBean != null) {
+                            ExecutionGraph.Bean outcome = seg.produce(a.outputBean.beanType, cs);
+                            bmap.put(a.outputBean, outcome);
+                        }
+                    }
+                }
+            }        
+        }    
+        
+        for(CheckpointState cs: checkpoints) {
+            if (cs.seqNo != 0) {
+                // ignore start checkpoint
+                
+                ExecutionGraph.Checkpoint ec = seg.checkpoint(cs.name, cs.host, null);
+                for(Action a: cs.dependencies) {
+                    seg.depends(ec, amap.get(a));
+                }
+                for(Action a: cs.dependents) {
+                    seg.depends(amap.get(a), ec);
+                }
+            }
+        }     
+        
+        return seg;
+    }
+    
     public void run(ExecutionObserver observer) {
         initState();
         this.observer = observer != null ? observer : new NullObserver();
@@ -131,7 +230,9 @@ class RuntimeGraph {
     }
 
     protected void completed(Action action) {
-        observer.onComplete(new CallDescr(action));
+        if (!isExportAction(action)) {
+            observer.onComplete(new CallDescr(action));
+        }
         for(CheckpointState cs: action.dependents) {
             reviewCheckpoint(cs);
         }        
@@ -191,33 +292,56 @@ class RuntimeGraph {
     }
 
     private void doFire(final Action action) {
-        ++pendingCount;
-        action.started = true;
-        observer.onFire(new CallDescr(action));
-        BeanHandle handle = action.hostBean.handle;
-        handle.fire(action.toInvocation(), new DefereCallback() {
+        if (isExportAction(action)) {
+            action.started = true;
+            ++pendingCount;
+            final BeanHandle out = action.beanParams[0].handle;
             
-            @Override
-            public void onError(Exception error) {
-                action.error = error;
-                observer.onComplete(new CallDescr(action));
-                failExecution(error);                
-            }
-            
-            @Override
-            public void onDone(BeanHandle handle) {
-                action.completed = true;
-                if (action.outputBean != null) {
-                    action.outputBean.handle = handle;
-                }
-                completed(action);          
-                if (action.outputBean != null) {
+            reactionQueue.add(new Runnable() {                
+                @Override
+                public void run() {
+                    --pendingCount;
+                    action.completed = true;
+                    
+                    action.outputBean.handle = out;
+                    completed(action);          
                     available(action.outputBean);
                 }
-            }
-        });
+            });
+        }
+        else {
+            ++pendingCount;
+            action.started = true;
+            observer.onFire(new CallDescr(action));
+            BeanHandle handle = action.hostBean.handle;
+            handle.fire(action.toInvocation(), new DefereCallback() {
+                
+                @Override
+                public void onError(Exception error) {
+                    action.error = error;
+                    observer.onComplete(new CallDescr(action));
+                    failExecution(error);                
+                }
+                
+                @Override
+                public void onDone(BeanHandle handle) {
+                    action.completed = true;
+                    if (action.outputBean != null) {
+                        action.outputBean.handle = handle;
+                    }
+                    completed(action);          
+                    if (action.outputBean != null) {
+                        available(action.outputBean);
+                    }
+                }
+            });
+        }
     }
     
+    private boolean isExportAction(Action action) {
+        return action.hostBean == null && EXPORT_METHOD.equals(action.method);
+    }
+
     private boolean isExecutionReady(Action a) {
         for(CheckpointState cs: a.checkpointDeps) {
             if (!cs.passed) {
@@ -276,7 +400,7 @@ class RuntimeGraph {
     private class GraphProcessor {
         
         private ActionGraph graph;
-        private Map<ActionGraph.LocalBean, ProtoBean> exportedBeans = new HashMap<ActionGraph.LocalBean, RuntimeGraph.ProtoBean>();
+        private Map<ActionGraph.LocalBean, ProtoBean> injectedBeans = new HashMap<ActionGraph.LocalBean, RuntimeGraph.ProtoBean>();
         private Map<ActionGraph.Action, ProtoAction> protoActions = new LinkedHashMap<ActionGraph.Action, RuntimeGraph.ProtoAction>();
         
         private ActionGraph.Bean omniLocator;
@@ -284,6 +408,8 @@ class RuntimeGraph {
         private RawGraphData.CheckpointInfo[] sourceGraph;
         private Set<ActionGraph.Bean> locations;
         private Map<ActionGraph.Bean, ExecutionHost[]> resolved = new LinkedHashMap<ActionGraph.Bean, ExecutionHost[]>();
+        private List<ExportRef> exports = new ArrayList<RuntimeGraph.ExportRef>();
+        private Map<ExportTarget, Action> exportMap = new HashMap<RuntimeGraph.ExportTarget, RuntimeGraph.Action>();
         
         private int changeCounter = 0;
         private Set<Object> processed = new HashSet<Object>(); // used for actions and beans
@@ -303,11 +429,28 @@ class RuntimeGraph {
                 throw new IllegalArgumentException("Execution graph is empty");
             }
             enumActions();
+            verifyExportedBeans();
             resolveLocators();
             resolveLocations();
             processCheckpoints();
             processActions();
+            linkExports();
             initDependencies();
+        }
+
+        private void verifyExportedBeans() {
+            for(ExportRef export: exports) {
+                BeanIdentity bi = export.identity;
+                for(ExportRef ee: exports) {
+                    if (ee != export) {
+                        if (bi.equals(ee.identity)) {
+                            if (export.isOmniLocation() && ee.isOmniLocation()) {
+                                throw new IllegalArgumentException("Ambigous bean publishing", export.exportAction.getSite().getStackTraceAsExcpetion());
+                            }
+                        }
+                    }
+                }
+            }            
         }
 
         protected void initCheckpoints() {
@@ -345,6 +488,25 @@ class RuntimeGraph {
             if (protoActions.containsKey(a)) {
                 return;
             }
+            else if (isExportAction(a)) {
+                // This is export action
+                ExportRef eref = new ExportRef();
+                initProtoBean((LocalBean) a.getBeanParams()[0]);
+                eref.bean = (LocalBean) a.getBeanParams()[0];
+                eref.exportAction = a;
+                eref.identity = new BeanIdentity(eref.bean.getType(), (Object[])a.getGroundParams()[1]);
+                exports.add(eref);
+                ProtoAction pa = new ProtoAction();
+                pa.action = a;
+                eref.protoAction = pa;
+                protoActions.put(a, pa);
+                ActionGraph.Bean host = a.getHostBean();
+                eref.locators.add(host);
+                if (host == omniLocator) {
+                    eref.omniLocation = true;
+                }
+                pa.locators.addAll(eref.locators);
+            }
             else {
                 ProtoAction pa = new ProtoAction();
                 pa.action = a;
@@ -362,33 +524,38 @@ class RuntimeGraph {
             }            
         }
 
+        private boolean isExportAction(org.gridkit.lab.gridbeans.ActionGraph.Action a) {
+            return a.getSite().allMethodAliases().contains(EXPORT_METHOD);
+        }
+
         protected void initProtoBean(ActionGraph.Bean bean) {
             ActionGraph.LocalBean lbean = (LocalBean) bean;
-            if (isExported(lbean)) {
-                initExportedBean(lbean);
+            if (isInjected(lbean)) {
+                initInjectedBean(lbean);
             }
             else {
                 initProtoAction(lbean.getOrigin());
             }
         }
 
-        private boolean isExported(ActionGraph.LocalBean bean) {
+        private boolean isInjected(ActionGraph.LocalBean bean) {
             ActionGraph.Action a = bean.getOrigin();
             Bean hostBean = a.getHostBean();
             return (locations.contains(hostBean) || omniLocator == hostBean || rootLocator == hostBean)
-                    && a.getSite().allMethodAliases().contains(EXPORT_METHOD);
+                    && a.getSite().allMethodAliases().contains(IMPORT_METHOD);
         }
         
-        private void initExportedBean(ActionGraph.LocalBean bean) {
-            if (!exportedBeans.containsKey(bean)) {
+        private void initInjectedBean(ActionGraph.LocalBean bean) {
+            if (!injectedBeans.containsKey(bean)) {
                 ProtoBean pb = new ProtoBean();
                 pb.bean = bean;
+                pb.beanIdentity = new BeanIdentity(bean.getOrigin());                
                 Bean location = bean.getOrigin().getHostBean();
                 pb.locators.add(location);
                 if (!locations.contains(location)) {
                     throw new RuntimeException("Unknown location");
                 }
-                exportedBeans.put(bean, pb);
+                injectedBeans.put(bean, pb);
                 if (location != omniLocator) {
                     resolved.put(location, null); // schedule resolution
                 }
@@ -418,6 +585,68 @@ class RuntimeGraph {
                     throw new RuntimeException("Cannot resolve execution locations");
                 }
             }
+        }
+
+        private void bindExports() {
+            // resolve specifics
+            for(ExportRef export: exports) {
+                if (!export.isOmniLocation()) {
+                    bindBean(export);                    
+                }
+            }       
+            // resolve omni locations
+            for(ExportRef export: exports) {
+                if (export.isOmniLocation()) {
+                    matchBean(export);
+                }
+            }       
+        }
+
+        private void matchBean(ExportRef export) {
+            for(ProtoBean pb: injectedBeans.values()) {
+                if (pb.beanIdentity.equals(export.identity) && pb.binding == null) {
+                    pb.binding = export;
+                    export.locators.addAll(pb.locators);
+                    export.protoAction.locators.addAll(pb.locators);
+                }
+            }
+        }
+
+        private void bindBean(ExportRef export) {
+            Set<ExecutionHost> publishLocations = resolveLocation(export.locators);
+            
+            for(ProtoBean pb: injectedBeans.values()) {
+                if (pb.beanIdentity.equals(export.identity)) {
+                    Set<ExecutionHost> bt = resolveLocation(pb.locators);
+                    if (publishLocations.containsAll(bt)) {
+                        if (pb.binding != null) {
+                            throw new RuntimeException("Ambigous bean, cannot resolve source", pb.bean.getOrigin().getSite().getStackTraceAsExcpetion());
+                        }
+                        pb.binding = export;
+                    }
+                    else {
+                        bt.retainAll(publishLocations);
+                        if (!bt.isEmpty()) {
+                            throw new RuntimeException("Ambigous bean, cannot resolve source", pb.bean.getOrigin().getSite().getStackTraceAsExcpetion());
+                        }
+                    }
+                }
+            }
+        }
+
+        protected Set<ExecutionHost> resolveLocation(Set<Bean> locators) {
+            Set<ExecutionHost> locations;
+            locations = new HashSet<RuntimeEnvironment.ExecutionHost>();
+            for (ActionGraph.Bean l: locators) {
+                if (l != omniLocator) {
+                    ExecutionHost[] eh = resolved.get(l);
+                    if (eh == null) {
+                        throw new RuntimeException("Unresolved bean: " + l);
+                    }
+                    locations.addAll(Arrays.asList(eh));
+                }
+            }
+            return locations;
         }
 
         private boolean tryResolve(Bean locator) {
@@ -451,6 +680,7 @@ class RuntimeGraph {
         }
 
         private void resolveLocations() {
+            boolean exportsApplied = false;
             while(true) {
                 changeCounter = 0;
                 int nUnresolved = 0;
@@ -464,10 +694,19 @@ class RuntimeGraph {
                 }
                 
                 if (nUnresolved == 0 && changeCounter == 0) {
+                    if (!exportsApplied) {
+                        bindExports();
+                    }
                     break;
                 }
                 if (changeCounter == 0) {
-                    throw new RuntimeException("Cannot resolve execution locations");
+                    if (!exportsApplied) {
+                        exportsApplied = true;
+                        bindExports();
+                    }
+                    else {
+                        throw new RuntimeException("Cannot resolve execution locations");
+                    }
                 }                
             }
         }
@@ -484,8 +723,8 @@ class RuntimeGraph {
         }
 
         private void inferLocation(Bean b, ProtoAction pa) {
-            if (exportedBeans.containsKey(b)) {
-                ProtoBean pb = exportedBeans.get(b);
+            if (injectedBeans.containsKey(b)) {
+                ProtoBean pb = injectedBeans.get(b);
                 if (pb.locators.contains(omniLocator)) {
                     // for omnilocated bean pull up locations from actions
                     if (pb.locators.addAll(pa.locators)) {
@@ -508,27 +747,40 @@ class RuntimeGraph {
         }
         
         private void propagateLocation(Bean b, ProtoAction pa) {
-            if (exportedBeans.containsKey(b)) {
-                ProtoBean pb = exportedBeans.get(b);
-                // else assign locations from bean to action
+            if (injectedBeans.containsKey(b)) {
+                ProtoBean pb = injectedBeans.get(b);
                 if (!pb.locators.containsAll(pa.locators)) {
-                    throw new RuntimeException("Internal error: cannot narrow location");
+                    if (!pa.locators.containsAll(pb.locators)) {
+                        throw new RuntimeException("Internal error: cannot narrow location");
+                    }
+                    else {
+                        // push up locations from action to bean
+                        if (pb.locators.addAll(pa.locators)) {
+                            ++changeCounter;
+                        }
+                    }
                 }
-                if (pa.locators.addAll(pb.locators)) {
+                else if (pa.locators.addAll(pb.locators)) {
                     ++changeCounter;
                 }
             }
             else {
-                ActionGraph.Action sa = ((ActionGraph.LocalBean)b).getOrigin();
-                ProtoAction spa = protoActions.get(sa);
-                if (spa == null) {
-                    new String();
+                if (locations.contains(b)) {
+                    // export action special case
+                    // skip
                 }
-                if (!spa.locators.containsAll(pa.locators)) {
-                    throw new RuntimeException("Internal error: cannot narrow location");
-                }
-                if (pa.locators.addAll(spa.locators)) {
-                    ++changeCounter;
+                else {
+                    ActionGraph.Action sa = ((ActionGraph.LocalBean)b).getOrigin();
+                    ProtoAction spa = protoActions.get(sa);
+                    if (spa == null) {
+                        new String();
+                    }
+                    if (!spa.locators.containsAll(pa.locators)) {
+                        throw new RuntimeException("Internal error: cannot narrow location");
+                    }
+                    if (pa.locators.addAll(spa.locators)) {
+                        ++changeCounter;
+                    }
                 }
             }            
         }
@@ -570,7 +822,10 @@ class RuntimeGraph {
                     throw new RuntimeException();
                 }
                 ActionGraph.Bean b = pa.action.getHostBean();
-                ensureBean(b);
+                boolean exportAction = isExportAction(pa);
+                if (!exportAction) {
+                    ensureBean(b);
+                }
                 for(ActionGraph.Bean ab: pa.action.getBeanParams()) {
                     if (ab != null) {
                         ensureBean(ab);
@@ -587,10 +842,26 @@ class RuntimeGraph {
                         }
                     }
                     
-                    BeanHolder hostBean = resolveBean(host, (LocalBean) b);
+                    BeanHolder hostBean = exportAction ? createStub(host) : resolveBean(host, (LocalBean) b);
                     Action a = createAction(host, hostBean, pa.action, groundArgs, beanArgs);
                     Bean outBean = pa.action.getResultBean();
-                    if (outBean != null && !outBean.getGraph().allConsumers(outBean).isEmpty()) {
+                    if (exportAction) {
+                        a.beanDeps.remove(a.hostBean);
+                        a.hostBean = null;
+                        BeanHolder in = beanArgs[0];
+                        BeanHolder oh = createProducedBeanHolder(host, in.beanType, a);
+                        a.outputBean = oh;
+                        for(ExportRef er: exports) {
+                            if (er.exportAction == pa) {
+                                ExportTarget et = new ExportTarget(host, er.identity);
+                                if (exportMap.containsKey(et)) {
+                                    throw new RuntimeException("Ambiguos bean publish " + er.identity + " at " + host, pa.action.getSite().getStackTraceAsExcpetion());
+                                }
+                                exportMap.put(et, a);
+                            }
+                        }
+                    }
+                    else if (outBean != null && !outBean.getGraph().allConsumers(outBean).isEmpty()) {
                         BeanHolder oh = createProducedBeanHolder(host, outBean.getType(), a);
                         a.outputBean = oh;
                     }
@@ -604,8 +875,20 @@ class RuntimeGraph {
             }
         }
 
+        private BeanHolder createStub(ExecutionHost host) {
+            BeanHolder stub = new BeanHolder();
+            stub.beanId = -1;
+            stub.beanType = ExecutionTarget.class;
+            stub.host = host;
+            return stub;
+        }
+
+        private boolean isExportAction(ProtoAction pa) {
+            return locations.contains(pa.action.getHostBean()) && pa.action.getSite().allMethodAliases().contains(EXPORT_METHOD);
+        }
+
         private BeanHolder resolveBean(ExecutionHost host, LocalBean ab) {
-            if (exportedBeans.containsKey(ab)) {
+            if (injectedBeans.containsKey(ab)) {
                 BeanHolder bh = lookupExportedBeanHolder(host, new BeanIdentity(ab.getOrigin()));
                 return bh;
             }
@@ -617,7 +900,7 @@ class RuntimeGraph {
         }
 
         private void ensureBean(Bean b) {
-            ProtoBean pb = exportedBeans.get(b);
+            ProtoBean pb = injectedBeans.get(b);
             if (pb != null) {
                 processBean(pb);
             }
@@ -632,10 +915,15 @@ class RuntimeGraph {
                 processed.add(pb);
                 Set<ExecutionHost> targets = targetsFor(pb.locators);
                 if (targets.isEmpty()) {
-                    throw new RuntimeException();
+                    throw new RuntimeException("Runtime scope is not resolve " + pb.beanIdentity, pb.bean.getOrigin().getSite().getStackTraceAsExcpetion());
                 }
                 for(ExecutionHost host: targets) {
-                    createExportedBeanHolder(host, new BeanIdentity(pb.bean.getOrigin()));
+                    if (pb.binding == null) {
+                        if (!host.checkBean(pb.beanIdentity.lookupType, pb.beanIdentity.lookupId)) {
+                            throw new RuntimeException("Cannot resolve bean " + pb.beanIdentity, pb.bean.getOrigin().getSite().getStackTraceAsExcpetion());
+                        }
+                    }
+                    createExportedBeanHolder(host, pb.beanIdentity);
                 }
             }
         }
@@ -651,6 +939,18 @@ class RuntimeGraph {
             }
             
             return targets;
+        }
+        
+        private void linkExports() {
+            for(BeanHolder bh: beans) {
+                if (bh.lookupId != null) {
+                    ExportTarget et = new ExportTarget(bh.host, bh.lookupId);
+                    Action pa = exportMap.get(et);
+                    if (pa != null) {
+                        bh.producerAction = pa;
+                    }
+                }
+            }
         }
         
         private void initDependencies() {
@@ -696,9 +996,26 @@ class RuntimeGraph {
         
         ActionGraph.LocalBean bean;
         Set<Bean> locators = new LinkedHashSet<ActionGraph.Bean>();
+        BeanIdentity beanIdentity;
         
+        ExportRef binding;
     }
     
+    private static class ExportRef {
+        
+        BeanIdentity identity;
+        ActionGraph.LocalBean bean;
+        ActionGraph.Action exportAction;
+        ProtoAction protoAction;
+        Set<Bean> locators = new LinkedHashSet<ActionGraph.Bean>();
+        boolean omniLocation;
+        
+        public boolean isOmniLocation() {
+            return omniLocation;
+        }
+        
+    }
+
     private static class Action {
 
         ActionGraph.Action source;
@@ -873,7 +1190,7 @@ class RuntimeGraph {
                 return bh;
             }
         }
-        throw new RuntimeException("No such bean found");
+        throw new RuntimeException("No such bean found " + bi + " at " + host);
     }
 
     protected Action createAction(ExecutionHost host, BeanHolder bean, ActionGraph.Action source, Object[] groundArgs, BeanHolder[] beanArgs) {
@@ -927,9 +1244,49 @@ class RuntimeGraph {
         return st;
     }
     
+    private static class ExportTarget {
+        
+        private ExecutionHost target;
+        private BeanIdentity id;
+        
+        public ExportTarget(ExecutionHost target, BeanIdentity id) {
+            this.target = target;
+            this.id = id;
+        }
 
+        @Override
+        public int hashCode() {
+            final int prime = 31;
+            int result = 1;
+            result = prime * result + ((id == null) ? 0 : id.hashCode());
+            result = prime * result + ((target == null) ? 0 : target.hashCode());
+            return result;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj)
+                return true;
+            if (obj == null)
+                return false;
+            if (getClass() != obj.getClass())
+                return false;
+            ExportTarget other = (ExportTarget) obj;
+            if (id == null) {
+                if (other.id != null)
+                    return false;
+            } else if (!id.equals(other.id))
+                return false;
+            if (target == null) {
+                if (other.target != null)
+                    return false;
+            } else if (!target.equals(other.target))
+                return false;
+            return true;
+        }
+    }
     
-    private static class ChDescr implements CheckpointDescription {
+    private static class ChDescr implements ExecutionGraph.Checkpoint {
         
         private CheckpointState ch;
 
@@ -938,18 +1295,28 @@ class RuntimeGraph {
         }
 
         @Override
-        public String getName() {
+        public String label() {
             return ch.toString();
         }
 
         @Override
-        public boolean isGlobal() {
-            return ch.getHost() == null;
+        public Set<Step> dependencies() {
+            throw new UnsupportedOperationException();
         }
 
         @Override
-        public Object getExecutionHost() {
-            return ch.getHost();
+        public Set<Step> dependents() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public TopologyNode host() {
+            return ch.host;
+        }
+
+        @Override
+        public ActionSite callSite() {
+            return null;
         }
 
         public String toString() {
@@ -1035,7 +1402,7 @@ class RuntimeGraph {
         }
 
         @Override
-        public void onCheckpoint(CheckpointDescription checkpoint) {
+        public void onCheckpoint(ExecutionGraph.Checkpoint checkpoint) {
         }
 
         @Override

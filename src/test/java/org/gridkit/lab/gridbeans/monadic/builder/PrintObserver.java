@@ -1,10 +1,9 @@
 package org.gridkit.lab.gridbeans.monadic.builder;
 
+import org.gridkit.lab.gridbeans.monadic.ExecutionGraph;
 import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.CallDescription;
-import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.CheckpointDescription;
-import org.gridkit.lab.gridbeans.monadic.ExecutionGraph.ExecutionObserver;
 
-public class PrintObserver implements ExecutionObserver {
+public class PrintObserver implements ExecutionGraph.ExecutionObserver {
 
     @Override
     public void onFire(CallDescription call) {
@@ -17,12 +16,12 @@ public class PrintObserver implements ExecutionObserver {
     }
 
     @Override
-    public void onCheckpoint(CheckpointDescription checkpoint) {
-        if (checkpoint.isGlobal()) {
+    public void onCheckpoint(ExecutionGraph.Checkpoint checkpoint) {
+        if (checkpoint.host() == null) {
             System.out.println("CHECKPOINT " + checkpoint);
         }
         else {
-            System.out.println("SYNC [" + checkpoint.getExecutionHost() + "] " + checkpoint);
+            System.out.println("SYNC [" + checkpoint.host() + "] " + checkpoint);
         }
     }
 

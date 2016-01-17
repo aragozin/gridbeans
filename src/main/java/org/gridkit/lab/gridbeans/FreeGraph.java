@@ -464,6 +464,13 @@ public class FreeGraph implements ActionGraph {
 		}
 
 		@Override
+        public RuntimeException getStackTraceAsExcpetion() {
+            RuntimeException e = new RuntimeException("Call site");
+            e.setStackTrace(stackTrace);
+            return e;
+        }
+
+        @Override
 		public String toString() {
 			return PrintHelper.toString(this);
 		}
